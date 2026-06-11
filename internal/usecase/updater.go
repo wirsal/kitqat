@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/brisurf/kitqa/internal/adapter/cbagnito"
-	"github.com/brisurf/kitqa/internal/adapter/confluence"
+	"github.com/wirsal/kitqa/internal/adapter/cbagnito"
+	"github.com/wirsal/kitqa/internal/adapter/confluence"
 )
 
 // UpdateScenarioUseCase injects Jira ticket links into the "No. Test Case" cells

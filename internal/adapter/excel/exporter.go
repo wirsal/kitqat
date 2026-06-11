@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/brisurf/kitqa/internal/domain"
+	"github.com/wirsal/kitqa/internal/domain"
 	"github.com/xuri/excelize/v2"
 )
 

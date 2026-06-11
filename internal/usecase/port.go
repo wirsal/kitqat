@@ -1,6 +1,6 @@
 package usecase
 
-import "github.com/brisurf/kitqa/internal/domain"
+import "github.com/wirsal/kitqa/internal/domain"
 
 type ConfluenceRepository interface {
 	// ResolvePageID resolves a short URL (e.g. /x/DKFPZQ) or full URL to a numeric page ID.

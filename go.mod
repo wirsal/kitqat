@@ -1,4 +1,4 @@
-module github.com/brisurf/kitqa
+module github.com/wirsal/kitqa
 
 go 1.24.2
 
