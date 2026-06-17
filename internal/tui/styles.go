@@ -3,7 +3,7 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 const (
-	sidebarWidth = 30
+	sidebarWidth = 34
 	contentWidth = 56
 )
 

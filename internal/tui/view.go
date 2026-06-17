@@ -106,10 +106,22 @@ var formLabelsUpdate = [fieldCountUC2]string{
 	"Job URL   :",
 }
 
+var formLabelsSetDone = [fieldCountUC3]string{
+	"Username  :",
+	"Password  :",
+	"Job URL   :",
+}
+
 func (m Model) formLabel(i int) string {
-	if m.activeUC == ucUpdateScenario {
+	switch m.activeUC {
+	case ucUpdateScenario:
 		if i < fieldCountUC2 {
 			return formLabelsUpdate[i]
+		}
+		return ""
+	case ucSetDone:
+		if i < fieldCountUC3 {
+			return formLabelsSetDone[i]
 		}
 		return ""
 	}
@@ -117,8 +129,11 @@ func (m Model) formLabel(i int) string {
 }
 
 func (m Model) activeTitle() string {
-	if m.activeUC == ucUpdateScenario {
+	switch m.activeUC {
+	case ucUpdateScenario:
 		return "Update Scenario Detail"
+	case ucSetDone:
+		return "Mark Tickets as Done"
 	}
 	return "Download TC to Excel"
 }
@@ -146,13 +161,20 @@ func (m Model) renderForm() string {
 	}
 
 	sb.WriteString("\n")
-	if m.activeUC == ucUpdateScenario {
+	switch m.activeUC {
+	case ucUpdateScenario:
 		if m.formFocus == m.activeFieldButton() {
 			sb.WriteString(btnFocusStyle.Render("  Update  "))
 		} else {
 			sb.WriteString(btnBlurStyle.Render(" Update "))
 		}
-	} else {
+	case ucSetDone:
+		if m.formFocus == m.activeFieldButton() {
+			sb.WriteString(btnFocusStyle.Render("  Set Done  "))
+		} else {
+			sb.WriteString(btnBlurStyle.Render(" Set Done "))
+		}
+	default:
 		if m.formFocus == m.activeFieldButton() {
 			sb.WriteString(btnFocusStyle.Render("  Download  "))
 		} else {

@@ -132,6 +132,96 @@ func (c *Client) GetFields() ([]FieldMeta, error) {
 	return fields, nil
 }
 
+// Transition represents a Jira workflow transition.
+type Transition struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	To   struct {
+		Name string `json:"name"`
+	} `json:"to"`
+}
+
+// GetTransitions returns available workflow transitions for a Jira issue.
+func (c *Client) GetTransitions(issueKey string) ([]Transition, error) {
+	url := fmt.Sprintf("%s/rest/api/2/issue/%s/transitions", c.baseURL, issueKey)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get transitions: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get transitions returned %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	var result struct {
+		Transitions []Transition `json:"transitions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode transitions: %w", err)
+	}
+	return result.Transitions, nil
+}
+
+// TransitionIssue moves an issue to the given transition ID.
+func (c *Client) TransitionIssue(issueKey, transitionID string) error {
+	url := fmt.Sprintf("%s/rest/api/2/issue/%s/transitions", c.baseURL, issueKey)
+	body := fmt.Sprintf(`{"transition":{"id":"%s"}}`, transitionID)
+
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("transition issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("transition returned %d: %s", resp.StatusCode, truncate(string(b), 200))
+	}
+	return nil
+}
+
+// FindDoneTransitionID returns the transition ID that moves an issue to a "done" state.
+// It checks transition name and destination status name against common done-state names.
+func FindDoneTransitionID(transitions []Transition) string {
+	doneWords := []string{"done", "closed", "close", "resolved", "resolve", "finished", "complete", "completed"}
+	for _, t := range transitions {
+		name := strings.ToLower(t.Name)
+		dest := strings.ToLower(t.To.Name)
+		for _, w := range doneWords {
+			if name == w || dest == w {
+				return t.ID
+			}
+		}
+	}
+	// Looser partial match fallback
+	for _, t := range transitions {
+		name := strings.ToLower(t.Name)
+		dest := strings.ToLower(t.To.Name)
+		for _, w := range doneWords {
+			if strings.Contains(name, w) || strings.Contains(dest, w) {
+				return t.ID
+			}
+		}
+	}
+	return ""
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

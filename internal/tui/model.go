@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/wirsal/kitqa/internal/adapter/cbagnito"
 	"github.com/wirsal/kitqa/internal/adapter/confluence"
 	"github.com/wirsal/kitqa/internal/adapter/excel"
 	"github.com/wirsal/kitqa/internal/adapter/jira"
 	"github.com/wirsal/kitqa/internal/domain"
 	"github.com/wirsal/kitqa/internal/usecase"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type viewState int
@@ -30,6 +30,7 @@ type activeUseCase int
 const (
 	ucDownload       activeUseCase = iota
 	ucUpdateScenario               // update Scenario Detail page with Jira links
+	ucSetDone                      // transition Jira tickets from CBAgnito job to Done
 )
 
 type menuItem struct {
@@ -48,17 +49,24 @@ type updateDoneMsg struct {
 	result *usecase.UpdateResult
 }
 
+type setDoneMsg struct {
+	err    error
+	result *usecase.SetDoneResult
+}
+
 const (
-	fieldUsername = 0
-	fieldPassword = 1
-	fieldPageURL  = 2
-	fieldRepoPath = 3
-	fieldProject  = 4 // UC1 only: project key (e.g. SPBRISURF)
-	fieldOutput   = 5 // UC1: output file path
-	fieldJobURL   = 3 // UC2: CBAgnito job URL (slot 3, after Page URL)
+	fieldUsername  = 0
+	fieldPassword  = 1
+	fieldPageURL   = 2
+	fieldRepoPath  = 3
+	fieldProject   = 4 // UC1 only: project key (e.g. SPBRISURF)
+	fieldOutput    = 5 // UC1: output file path
+	fieldJobURL    = 3 // UC2: CBAgnito job URL (slot 3, after Page URL)
+	fieldJobURLUC3 = 2 // UC3: CBAgnito job URL (slot 2, no Page URL needed)
 
 	fieldCountUC1 = 6 // UC1 has 6 input fields
-	fieldCountUC2 = 4 // UC2 has 4 input fields (no Repo Path needed)
+	fieldCountUC2 = 4 // UC2 has 4 input fields
+	fieldCountUC3 = 3 // UC3 has 3 input fields (username, password, job URL)
 	fieldCount    = 6 // max — always allocate this many inputs
 )
 
@@ -101,7 +109,15 @@ func New() Model {
 				"  • CBAgnito job URL",
 		},
 		{
-			title:       "3. Exit",
+			title: "3. Mark Tickets as Done",
+			description: "Transition all Jira tickets from a\n" +
+				"CBAgnito job to 'Done' status.\n\n" +
+				"Fields:\n" +
+				"  • Username & Password\n" +
+				"  • CBAgnito job URL",
+		},
+		{
+			title:       "4. Exit",
 			description: "Exit the application.",
 		},
 	}
@@ -111,9 +127,9 @@ func New() Model {
 	s.Style = spinnerStyle
 
 	return Model{
-		state:  stateMenu,
-		items:  items,
-		cursor: 0,
+		state:   stateMenu,
+		items:   items,
+		cursor:  0,
 		spinner: s,
 	}
 }
@@ -161,6 +177,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sb.WriteString("Unmatched: " + strings.Join(r.UnmatchedTCs, ", "))
 			} else {
 				sb.WriteString("All TCs matched.")
+			}
+			m.resultMsg = sb.String()
+		}
+
+	case setDoneMsg:
+		m.state = stateResult
+		if msg.err != nil {
+			m.resultErr = true
+			m.resultMsg = msg.err.Error()
+		} else {
+			m.resultErr = false
+			r := msg.result
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Total    : %d ticket(s)\n", r.Total))
+			sb.WriteString(fmt.Sprintf("Done     : %d ticket(s)\n", r.Updated))
+			sb.WriteString(fmt.Sprintf("Skipped  : %d ticket(s)\n", r.Skipped))
+			if len(r.Failed) > 0 {
+				sb.WriteString("Failed   : " + strings.Join(r.Failed, ", "))
+			} else {
+				sb.WriteString("All tickets processed successfully.")
 			}
 			m.resultMsg = sb.String()
 		}
@@ -213,6 +249,12 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.formFocus = 0
 			return m, m.inputs[0].Focus()
 		case 2:
+			m.activeUC = ucSetDone
+			m.state = stateForm
+			m.inputs = buildInputs(ucSetDone)
+			m.formFocus = 0
+			return m, m.inputs[0].Focus()
+		case 3:
 			return m, tea.Quit
 		}
 	}
@@ -250,10 +292,15 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activeFieldCount() int {
-	if m.activeUC == ucDownload {
+	switch m.activeUC {
+	case ucDownload:
 		return fieldCountUC1
+	case ucUpdateScenario:
+		return fieldCountUC2
+	case ucSetDone:
+		return fieldCountUC3
 	}
-	return fieldCountUC2
+	return fieldCountUC1
 }
 
 func (m Model) activeFieldButton() int {
@@ -262,7 +309,7 @@ func (m Model) activeFieldButton() int {
 
 func (m Model) formShift(delta int) (tea.Model, tea.Cmd) {
 	btn := m.activeFieldButton()
-	fc  := m.activeFieldCount()
+	fc := m.activeFieldCount()
 	if m.formFocus < fc {
 		m.inputs[m.formFocus].Blur()
 	}
@@ -276,14 +323,14 @@ func (m Model) formShift(delta int) (tea.Model, tea.Cmd) {
 func (m Model) startAction() (tea.Model, tea.Cmd) {
 	username := m.inputs[fieldUsername].Value()
 	password := m.inputs[fieldPassword].Value()
-	pageURL  := m.inputs[fieldPageURL].Value()
+	pageURL := m.inputs[fieldPageURL].Value()
 
 	m.state = stateRunning
 
 	if m.activeUC == ucDownload {
 		repoPath := m.inputs[fieldRepoPath].Value()
-		project  := m.inputs[fieldProject].Value()
-		output   := strings.ReplaceAll(m.inputs[fieldOutput].Value(), `"`, "")
+		project := m.inputs[fieldProject].Value()
+		output := strings.ReplaceAll(m.inputs[fieldOutput].Value(), `"`, "")
 		if output == "" {
 			output = "test_cases.xlsx"
 		}
@@ -293,10 +340,19 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 		)
 	}
 
-	jobURL := m.inputs[fieldJobURL].Value()
+	if m.activeUC == ucUpdateScenario {
+		jobURL := m.inputs[fieldJobURL].Value()
+		return m, tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg { return doUpdateScenario(username, password, pageURL, jobURL) },
+		)
+	}
+
+	// UC3: Set Jira Tickets to Done
+	jobURL := m.inputs[fieldJobURLUC3].Value()
 	return m, tea.Batch(
 		m.spinner.Tick,
-		func() tea.Msg { return doUpdateScenario(username, password, pageURL, jobURL) },
+		func() tea.Msg { return doSetDone(username, password, jobURL) },
 	)
 }
 
@@ -317,8 +373,8 @@ func (m Model) updateResult(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func doDownload(username, password, pageURL, repoPath, project, output string) tea.Msg {
 	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
-	repo             := confluence.NewRepository(confluenceClient)
-	jiraClient       := jira.NewClient("https://jira.bri.co.id", username, password)
+	repo := confluence.NewRepository(confluenceClient)
+	jiraClient := jira.NewClient("https://jira.bri.co.id", username, password)
 	repo.WithJiraClient(jiraClient)
 	repo.SetDefaultRepoPath(repoPath)
 	repo.SetDefaultProject(project)
@@ -348,12 +404,22 @@ func doDownload(username, password, pageURL, repoPath, project, output string) t
 
 func doUpdateScenario(username, password, pageURL, jobURL string) tea.Msg {
 	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
-	repo             := confluence.NewRepository(confluenceClient)
-	cbClient         := cbagnito.NewClient(username, password)
+	repo := confluence.NewRepository(confluenceClient)
+	cbClient := cbagnito.NewClient(username, password)
 
 	uc := usecase.NewUpdateScenarioUseCase(repo, cbClient)
 	result, err := uc.Execute(pageURL, jobURL)
 	return updateDoneMsg{err: err, result: result}
+}
+
+// ── Set Done logic ────────────────────────────────────────────────────────────
+
+func doSetDone(username, password, jobURL string) tea.Msg {
+	jiraClient := jira.NewClient("https://jira.bri.co.id", username, password)
+	cbClient := cbagnito.NewClient(username, password)
+	uc := usecase.NewSetDoneUseCase(jiraClient, cbClient)
+	result, err := uc.Execute(jobURL)
+	return setDoneMsg{err: err, result: result}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -363,15 +429,18 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 
 	inputs[fieldUsername] = newInput("e.g. wirsal.dev", false)
 	inputs[fieldPassword] = newInput("your password", true)
-	inputs[fieldPageURL]  = newInput("https://confluence.bri.co.id/x/...", false)
+	inputs[fieldPageURL] = newInput("https://confluence.bri.co.id/x/...", false)
 
 	if uc == ucDownload {
 		inputs[fieldRepoPath] = newInput("/Monitoring Subrogasi Unprocess", false)
-		inputs[fieldProject]  = newInputWithValue("SPBRISURF", false)
-		inputs[fieldOutput]   = newInputWithValue("test_cases.xlsx", false)
-	} else {
-		// UC2: slot 3 = Job URL (Repo Path not needed)
+		inputs[fieldProject] = newInputWithValue("SPBRISURF", false)
+		inputs[fieldOutput] = newInputWithValue("test_cases.xlsx", false)
+	} else if uc == ucUpdateScenario {
+		// UC2: slot 3 = Job URL
 		inputs[fieldJobURL] = newInput("http://172.18.249.109:1014/cr-job/...", false)
+	} else {
+		// UC3: slot 2 = Job URL (no Page URL needed)
+		inputs[fieldJobURLUC3] = newInput("http://172.18.249.109:1014/cr-job/...", false)
 	}
 
 	return inputs
