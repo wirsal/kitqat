@@ -46,8 +46,37 @@ func (e *Exporter) Export(testCases []domain.TestCase, outputPath string) error 
 		outputPath += ".xlsx"
 	}
 
-	f := excelize.NewFile()
+	f, err := e.build(testCases)
+	if err != nil {
+		return err
+	}
 	defer f.Close()
+
+	if err := f.SaveAs(outputPath); err != nil {
+		return fmt.Errorf("save file: %w", err)
+	}
+	return nil
+}
+
+// ExportBytes builds the same workbook as Export but returns it in-memory,
+// for callers that need to stream it (e.g. an HTTP response) instead of
+// writing to disk.
+func (e *Exporter) ExportBytes(testCases []domain.TestCase) ([]byte, error) {
+	f, err := e.build(testCases)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, fmt.Errorf("write to buffer: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (e *Exporter) build(testCases []domain.TestCase) (*excelize.File, error) {
+	f := excelize.NewFile()
 
 	defaultSheet := f.GetSheetName(0)
 	f.SetSheetName(defaultSheet, sheet)
@@ -55,19 +84,19 @@ func (e *Exporter) Export(testCases []domain.TestCase, outputPath string) error 
 	// Build styles
 	blueHeaderStyle, err := buildBlueHeaderStyle(f)
 	if err != nil {
-		return fmt.Errorf("create blue header style: %w", err)
+		return nil, fmt.Errorf("create blue header style: %w", err)
 	}
 	yellowHeaderStyle, err := buildYellowHeaderStyle(f)
 	if err != nil {
-		return fmt.Errorf("create yellow header style: %w", err)
+		return nil, fmt.Errorf("create yellow header style: %w", err)
 	}
 	yellowSubStyle, err := buildYellowSubStyle(f)
 	if err != nil {
-		return fmt.Errorf("create yellow sub-header style: %w", err)
+		return nil, fmt.Errorf("create yellow sub-header style: %w", err)
 	}
 	dataStyle, err := buildDataStyle(f)
 	if err != nil {
-		return fmt.Errorf("create data style: %w", err)
+		return nil, fmt.Errorf("create data style: %w", err)
 	}
 
 	// ── Row 1: main headers ────────────────────────────────────────────────────
@@ -158,10 +187,7 @@ func (e *Exporter) Export(testCases []domain.TestCase, outputPath string) error 
 		ActivePane:  "bottomLeft",
 	})
 
-	if err := f.SaveAs(outputPath); err != nil {
-		return fmt.Errorf("save file: %w", err)
-	}
-	return nil
+	return f, nil
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
