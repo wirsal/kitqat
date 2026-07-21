@@ -19,6 +19,9 @@ var (
 			Bold(true).
 			Foreground(colorOrange)
 
+	versionStyle = lipgloss.NewStyle().
+			Foreground(colorDim)
+
 	sectionLabelStyle = lipgloss.NewStyle().
 				Foreground(colorOrange).
 				Bold(true)

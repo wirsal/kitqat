@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/wirsal/kitqa/internal/version"
 )
 
 const (
@@ -37,6 +39,8 @@ func (m Model) renderSidebar() string {
 	var sb strings.Builder
 
 	sb.WriteString(appTitleStyle.Render(appTitle))
+	sb.WriteString(" ")
+	sb.WriteString(versionStyle.Render(version.Version))
 	sb.WriteString("\n\n")
 	sb.WriteString(sectionLabelStyle.Render("> How to Use"))
 	sb.WriteString("\n")

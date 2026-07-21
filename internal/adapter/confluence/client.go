@@ -2,12 +2,15 @@ package confluence
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,6 +59,13 @@ func (c *Client) ResolvePageID(input string) (string, error) {
 		return input, nil
 	}
 
+	// Confluence tiny links (/x/CODE) encode the page ID directly, so we can
+	// decode them locally without depending on the server issuing a redirect
+	// (some instances serve the page at /x/CODE with a 200 and no redirect).
+	if id := decodeTinyLink(input); id != "" {
+		return id, nil
+	}
+
 	// Build full URL if given a path
 	fullURL := input
 	if !strings.HasPrefix(input, "http") {
@@ -87,6 +97,7 @@ func (c *Client) ResolvePageID(input string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve short url: %w", err)
 	}
+	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 
 	// After all redirects, resp.Request.URL is the final destination.
@@ -101,6 +112,14 @@ func (c *Client) ResolvePageID(input string) (string, error) {
 	re := regexp.MustCompile(`/pages/(\d+)`)
 	if m := re.FindStringSubmatch(finalURL); len(m) > 1 {
 		return m[1], nil
+	}
+
+	// Fallback: the page ID is embedded in the rendered HTML as a meta tag
+	// (<meta name="ajs-page-id" content="NNN">) when the server serves the
+	// page directly instead of redirecting.
+	metaRe := regexp.MustCompile(`(?i)name="ajs-page-id"\s+content="(\d+)"`)
+	if m := metaRe.FindSubmatch(body); len(m) > 1 {
+		return string(m[1]), nil
 	}
 
 	return "", fmt.Errorf("unable to resolve page ID from: %s\n(final URL: %s)", input, finalURL)
@@ -199,6 +218,42 @@ func isNumericID(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+// tinyLinkRe matches a Confluence tiny link and captures the code segment,
+// e.g. "https://confluence.bri.co.id/x/-SekY" or "/x/-SekY" → "-SekY".
+var tinyLinkRe = regexp.MustCompile(`/x/([A-Za-z0-9_-]+)`)
+
+// decodeTinyLink decodes a Confluence tiny link (/x/CODE) into a numeric page ID.
+// The code is the 8-byte little-endian page ID, base64-encoded, with '/' mapped
+// to '-', '+' mapped to '_', and trailing zero bytes and '=' padding stripped.
+// Returns "" if the input is not a tiny link or cannot be decoded.
+func decodeTinyLink(input string) string {
+	m := tinyLinkRe.FindStringSubmatch(input)
+	if m == nil {
+		return ""
+	}
+
+	// Reverse the URL-safe substitutions Confluence applies.
+	b64 := strings.ReplaceAll(m[1], "-", "/")
+	b64 = strings.ReplaceAll(b64, "_", "+")
+	// Re-pad the stripped trailing zero bytes ('A') to a multiple of 4.
+	for len(b64)%4 != 0 {
+		b64 += "A"
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return ""
+	}
+
+	var buf [8]byte
+	copy(buf[:], raw) // little-endian; high zero bytes remain zero
+	id := binary.LittleEndian.Uint64(buf[:])
+	if id == 0 {
+		return ""
+	}
+	return strconv.FormatUint(id, 10)
 }
 
 func extractPageIDFromURL(rawURL string) string {
