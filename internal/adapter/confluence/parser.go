@@ -370,9 +370,15 @@ func ExtractJiraServerInfo(storageHTML string) (serverName, serverID string) {
 	return "System JIRA", ""
 }
 
-// reNoTestCaseRow matches a <tr> whose first <td> contains "No. Test Case" (case-insensitive).
-// Capture group 1 = full second <td> block, capture group 2 = inner content of that <td>.
-var reNoTestCaseRow = regexp.MustCompile(`(?is)(<tr[^>]*>(?:\s*<t[dh][^>]*>(?:(?:<[^>]+>)*)\s*no\.?\s*test\s*case\s*(?:</[^>]+>)*\s*</t[dh]>)(\s*<td[^>]*>)(.*?)(</td>)\s*(?:<t[dh][^>]*>.*?</t[dh]>\s*)*</tr>)`)
+// reTableRow matches a single table row. Rows are not nested, so a non-greedy
+// match to the first </tr> is safe for the flat vertical TC tables we target.
+var reTableRow = regexp.MustCompile(`(?is)<tr\b[^>]*>.*?</tr>`)
+
+// reTableCell matches a <td>/<th> cell and captures its inner content.
+var reTableCell = regexp.MustCompile(`(?is)<t[dh]\b[^>]*>(.*?)</t[dh]>`)
+
+// reTagStrip removes HTML/storage tags, leaving text content.
+var reTagStrip = regexp.MustCompile(`(?is)<[^>]+>`)
 
 // reExistingJiraKey extracts the key value from an already-injected Jira macro.
 var reExistingJiraKey = regexp.MustCompile(`(?i)<ac:parameter\s+ac:name="key">([^<]+)</ac:parameter>`)
@@ -380,51 +386,70 @@ var reExistingJiraKey = regexp.MustCompile(`(?i)<ac:parameter\s+ac:name="key">([
 // reFullJiraMacro matches a complete ac:structured-macro jira block for replacement.
 var reFullJiraMacro = regexp.MustCompile(`(?is)<ac:structured-macro\s+ac:name="jira"[^>]*>.*?</ac:structured-macro>`)
 
+// normalizeCellLabel strips tags and decodes entities (including &nbsp;), then
+// collapses whitespace so a label like "<p><strong>No.&nbsp;Test&nbsp;Case</strong></p>"
+// normalizes to "no. test case" — matching how the DOM parser reads labels.
+func normalizeCellLabel(inner string) string {
+	s := reTagStrip.ReplaceAllString(inner, " ")
+	s = html.UnescapeString(s)
+	// strings.Fields splits on all Unicode whitespace, including NBSP (U+00A0).
+	s = strings.Join(strings.Fields(s), " ")
+	return strings.ToLower(s)
+}
+
 // InjectJiraLinks scans the Confluence storage HTML for vertical "No. Test Case" rows
 // and appends (or replaces) a Jira structured-macro link in the value cell.
 //
 // tcNumToKey maps the two-digit TC number string (e.g. "01") to a Jira issue key
 // (e.g. "SPBRISURF-9736"). Returns the updated HTML and injection counts.
+//
+// Matching is done on tag-stripped, entity-decoded text (not raw regex against the
+// markup) so that Confluence's nested <p>/<strong> wrappers and &nbsp; separators
+// don't defeat the label match.
 func InjectJiraLinks(storageHTML string, tcNumToKey map[string]string, serverName, serverID string) (newHTML string, updated, skipped int) {
 	if serverName == "" {
 		serverName = "System JIRA"
 	}
 
-	result := reNoTestCaseRow.ReplaceAllStringFunc(storageHTML, func(match string) string {
-		// Extract inner content of the second <td>.
-		sub := reNoTestCaseRow.FindStringSubmatch(match)
-		if len(sub) < 5 {
-			return match
+	result := reTableRow.ReplaceAllStringFunc(storageHTML, func(row string) string {
+		cells := reTableCell.FindAllStringSubmatchIndex(row, -1)
+		if len(cells) < 2 {
+			return row
 		}
-		openTag := sub[2]  // e.g. <td>
-		inner := sub[3]    // existing cell content
-		closeTag := sub[4] // </td>
 
-		// Derive TC number from the cell text.
-		tcNum := extractTCNumber(inner)
+		// First cell must be a "No. Test Case" label.
+		labelInner := row[cells[0][2]:cells[0][3]]
+		if !verticalTCLabels[normalizeCellLabel(labelInner)] {
+			return row
+		}
+
+		// Second cell holds the TC number (and any existing link).
+		valStart, valEnd := cells[1][2], cells[1][3]
+		inner := row[valStart:valEnd]
+
+		tcNum := extractTCNumber(reTagStrip.ReplaceAllString(inner, ""))
 		if tcNum == "" {
-			return match
+			return row
 		}
-
 		jiraKey, ok := tcNumToKey[tcNum]
 		if !ok || jiraKey == "" {
-			return match // no mapping for this TC
+			return row // no mapping for this TC
 		}
 
-		// Check idempotency: existing Jira macro in the cell.
+		// Idempotency: an existing Jira macro in the cell.
 		if existingKeys := reExistingJiraKey.FindStringSubmatch(inner); len(existingKeys) > 1 {
 			if strings.TrimSpace(existingKeys[1]) == jiraKey {
 				skipped++
-				return match // already linked to the same key
+				return row // already linked to the same key
 			}
-			// Different key — replace the old macro.
+			// Different key — drop the old macro before appending the new one.
 			inner = reFullJiraMacro.ReplaceAllString(inner, "")
 		}
 
 		macro := buildJiraMacro(jiraKey, serverName, serverID)
 		newInner := strings.TrimRight(inner, " \t\n\r") + macro
 		updated++
-		return strings.Replace(match, openTag+inner+closeTag, openTag+newInner+closeTag, 1)
+		return row[:valStart] + newInner + row[valEnd:]
 	})
 
 	return result, updated, skipped

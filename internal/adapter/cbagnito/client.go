@@ -97,6 +97,15 @@ func (c *Client) login() error {
 	if postResp.StatusCode != http.StatusFound {
 		return fmt.Errorf("CBAgnito login failed (HTTP %d) — check username and password", postResp.StatusCode)
 	}
+
+	// A failed login can ALSO redirect (302) — back to /login — so a 302 alone
+	// is not proof of success. Verify the redirect target does not point back to
+	// the login page; otherwise the credentials were rejected and any later page
+	// fetch would come back as 404 (CBAgnito hides jobs from unauthenticated sessions).
+	if loc := postResp.Header.Get("Location"); strings.Contains(strings.ToLower(loc), "login") {
+		return fmt.Errorf("CBAgnito login failed — credentials rejected (redirected to %s). "+
+			"Note: CBAgnito uses your NIP as the username (e.g. 90185155), which may differ from your Confluence/Jira username", loc)
+	}
 	return nil
 }
 
@@ -115,7 +124,12 @@ type TicketEntry struct {
 }
 
 func (c *Client) fetchJobTickets(jobURL string) ([]TicketEntry, error) {
-	base := strings.TrimRight(jobURL, "/")
+	// Strip whitespace and surrounding quotes (copy-paste artefacts). A trailing
+	// space becomes %20 once encoded and makes the server return 404.
+	base := strings.TrimSpace(jobURL)
+	base = strings.Trim(base, `"'`)
+	base = strings.TrimSpace(base)
+	base = strings.TrimRight(base, "/")
 	parts := strings.Split(base, "/")
 	jobID := parts[len(parts)-1]
 
@@ -182,6 +196,10 @@ func (c *Client) parseHTMLPage(pageURL string) ([]TicketEntry, error) {
 
 	if resp.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("CBAgnito returned 403 — login may have failed or session expired")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("CBAgnito returned 404 for %s — check the job URL for a wrong job ID or a "+
+			"stray space/quote from copy-paste (a trailing space becomes %%20 and 404s)", pageURL)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("CBAgnito returned HTTP %d for %s", resp.StatusCode, pageURL)
