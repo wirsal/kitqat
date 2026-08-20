@@ -116,8 +116,20 @@ var formLabelsSetDone = [fieldCountUC3]string{
 	"Job URL   :",
 }
 
+var formLabelsFill = [fieldCountUC4]string{
+	"Username  :",
+	"Password  :",
+	"Page URL  :",
+	"Sheet File:",
+}
+
 func (m Model) formLabel(i int) string {
 	switch m.activeUC {
+	case ucFillScenario:
+		if i < fieldCountUC4 {
+			return formLabelsFill[i]
+		}
+		return ""
 	case ucUpdateScenario:
 		if i < fieldCountUC2 {
 			return formLabelsUpdate[i]
@@ -138,6 +150,8 @@ func (m Model) activeTitle() string {
 		return "Update Scenario Detail"
 	case ucSetDone:
 		return "Mark Tickets as Done"
+	case ucFillScenario:
+		return "Fill Scenario & Function"
 	}
 	return "Download TC to Excel"
 }
@@ -178,6 +192,12 @@ func (m Model) renderForm() string {
 		} else {
 			sb.WriteString(btnBlurStyle.Render(" Set Done "))
 		}
+	case ucFillScenario:
+		if m.formFocus == m.activeFieldButton() {
+			sb.WriteString(btnFocusStyle.Render("  Fill  "))
+		} else {
+			sb.WriteString(btnBlurStyle.Render(" Fill "))
+		}
 	default:
 		if m.formFocus == m.activeFieldButton() {
 			sb.WriteString(btnFocusStyle.Render("  Download  "))
@@ -193,7 +213,9 @@ func (m Model) renderForm() string {
 
 func (m Model) renderRunning() string {
 	var runText string
-	if m.activeUC == ucUpdateScenario {
+	if m.activeUC == ucFillScenario {
+		runText = "Reading spreadsheet and updating Confluence...\nPlease wait."
+	} else if m.activeUC == ucUpdateScenario {
 		runText = "Updating Scenario Detail page on Confluence...\nPlease wait."
 	} else {
 		runText = "Fetching test cases from Confluence...\nPlease wait."

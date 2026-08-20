@@ -12,6 +12,7 @@ import (
 	"github.com/wirsal/kitqa/internal/adapter/confluence"
 	"github.com/wirsal/kitqa/internal/adapter/excel"
 	"github.com/wirsal/kitqa/internal/adapter/jira"
+	"github.com/wirsal/kitqa/internal/adapter/sheet"
 	"github.com/wirsal/kitqa/internal/domain"
 	"github.com/wirsal/kitqa/internal/usecase"
 )
@@ -31,11 +32,14 @@ const (
 	ucDownload       activeUseCase = iota
 	ucUpdateScenario               // update Scenario Detail page with Jira links
 	ucSetDone                      // transition Jira tickets from CBAgnito job to Done
+	ucFillScenario                 // fill Scenario/Function cells from a spreadsheet
 )
 
 type menuItem struct {
 	title       string
 	description string
+	uc          activeUseCase
+	isExit      bool
 }
 
 type downloadDoneMsg struct {
@@ -54,19 +58,26 @@ type setDoneMsg struct {
 	result *usecase.SetDoneResult
 }
 
+type fillDoneMsg struct {
+	err    error
+	result *usecase.FillResult
+}
+
 const (
-	fieldUsername  = 0
-	fieldPassword  = 1
-	fieldPageURL   = 2
-	fieldRepoPath  = 3
-	fieldProject   = 4 // UC1 only: project key (e.g. SPBRISURF)
-	fieldOutput    = 5 // UC1: output file path
-	fieldJobURL    = 3 // UC2: CBAgnito job URL (slot 3, after Page URL)
-	fieldJobURLUC3 = 2 // UC3: CBAgnito job URL (slot 2, no Page URL needed)
+	fieldUsername   = 0
+	fieldPassword   = 1
+	fieldPageURL    = 2
+	fieldRepoPath   = 3
+	fieldProject    = 4 // UC1 only: project key (e.g. SPBRISURF)
+	fieldOutput     = 5 // UC1: output file path
+	fieldJobURL     = 3 // UC2: CBAgnito job URL (slot 3, after Page URL)
+	fieldJobURLUC3  = 2 // UC3: CBAgnito job URL (slot 2, no Page URL needed)
+	fieldSourceFile = 3 // UC4: spreadsheet path (slot 3, after Page URL)
 
 	fieldCountUC1 = 6 // UC1 has 6 input fields
 	fieldCountUC2 = 4 // UC2 has 4 input fields
 	fieldCountUC3 = 3 // UC3 has 3 input fields (username, password, job URL)
+	fieldCountUC4 = 4 // UC4 has 4 input fields (username, password, page URL, sheet file)
 	fieldCount    = 6 // max — always allocate this many inputs
 )
 
@@ -87,7 +98,22 @@ type Model struct {
 func New() Model {
 	items := []menuItem{
 		{
+			title: "0. Fill Scenario & Function",
+			uc:    ucFillScenario,
+			description: "Fill Scenario, Function, Input Data,\n" +
+				"Steps and Expected Result on a Confluence\n" +
+				"page from a spreadsheet. Creates TC tables\n" +
+				"that don't exist yet; never overwrites\n" +
+				"cells that already have content.\n\n" +
+				"Runs before step 1.\n\n" +
+				"Fields:\n" +
+				"  • Username & Password\n" +
+				"  • Confluence page URL\n" +
+				"  • Sheet file (.xlsx / .csv)",
+		},
+		{
 			title: "1. Download TC to Excel",
+			uc:    ucDownload,
 			description: "Download test cases from a Confluence\n" +
 				"Scenario Detail page and export to\n" +
 				"XLSX format ready to upload to CBAgnito.\n\n" +
@@ -100,6 +126,7 @@ func New() Model {
 		},
 		{
 			title: "2. Update Scenario Detail",
+			uc:    ucUpdateScenario,
 			description: "After uploading Excel to CBAgnito,\n" +
 				"inject Jira ticket links into the\n" +
 				"'No. Test Case' cells on Confluence.\n\n" +
@@ -110,6 +137,7 @@ func New() Model {
 		},
 		{
 			title: "3. Mark Tickets as Done",
+			uc:    ucSetDone,
 			description: "Transition all Jira tickets from a\n" +
 				"CBAgnito job to 'Done' status.\n\n" +
 				"Fields:\n" +
@@ -118,6 +146,7 @@ func New() Model {
 		},
 		{
 			title:       "4. Exit",
+			isExit:      true,
 			description: "Exit the application.",
 		},
 	}
@@ -201,6 +230,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resultMsg = sb.String()
 		}
 
+	case fillDoneMsg:
+		m.state = stateResult
+		if msg.err != nil {
+			m.resultErr = true
+			m.resultMsg = msg.err.Error()
+		} else {
+			m.resultErr = false
+			r := msg.result
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Page     : %s\n", r.PageTitle))
+			sb.WriteString(fmt.Sprintf("Filled   : %d cell(s)\n", r.FilledCells))
+			sb.WriteString(fmt.Sprintf("Skipped  : %d cell(s) (already filled)\n", r.SkippedCells))
+			if len(r.CreatedTCs) > 0 {
+				sb.WriteString("Created  : " + strings.Join(r.CreatedTCs, ", ") + "\n")
+			}
+			if len(r.UnmatchedTCs) > 0 {
+				sb.WriteString("Unmatched: " + strings.Join(r.UnmatchedTCs, ", ") + "\n")
+			}
+			if !r.Changed {
+				sb.WriteString("\nPage already up to date — nothing was written.")
+			}
+			m.resultMsg = strings.TrimRight(sb.String(), "\n")
+		}
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -235,28 +288,15 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor--
 		}
 	case "enter":
-		switch m.cursor {
-		case 0:
-			m.activeUC = ucDownload
-			m.state = stateForm
-			m.inputs = buildInputs(ucDownload)
-			m.formFocus = 0
-			return m, m.inputs[0].Focus()
-		case 1:
-			m.activeUC = ucUpdateScenario
-			m.state = stateForm
-			m.inputs = buildInputs(ucUpdateScenario)
-			m.formFocus = 0
-			return m, m.inputs[0].Focus()
-		case 2:
-			m.activeUC = ucSetDone
-			m.state = stateForm
-			m.inputs = buildInputs(ucSetDone)
-			m.formFocus = 0
-			return m, m.inputs[0].Focus()
-		case 3:
+		item := m.items[m.cursor]
+		if item.isExit {
 			return m, tea.Quit
 		}
+		m.activeUC = item.uc
+		m.state = stateForm
+		m.inputs = buildInputs(item.uc)
+		m.formFocus = 0
+		return m, m.inputs[0].Focus()
 	}
 	return m, nil
 }
@@ -299,6 +339,8 @@ func (m Model) activeFieldCount() int {
 		return fieldCountUC2
 	case ucSetDone:
 		return fieldCountUC3
+	case ucFillScenario:
+		return fieldCountUC4
 	}
 	return fieldCountUC1
 }
@@ -345,6 +387,14 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			m.spinner.Tick,
 			func() tea.Msg { return doUpdateScenario(username, password, pageURL, jobURL) },
+		)
+	}
+
+	if m.activeUC == ucFillScenario {
+		sourceFile := strings.ReplaceAll(m.inputs[fieldSourceFile].Value(), `"`, "")
+		return m, tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg { return doFillScenario(username, password, pageURL, sourceFile) },
 		)
 	}
 
@@ -422,6 +472,18 @@ func doSetDone(username, password, jobURL string) tea.Msg {
 	return setDoneMsg{err: err, result: result}
 }
 
+// ── Fill Scenario logic ───────────────────────────────────────────────────────
+
+func doFillScenario(username, password, pageURL, sourceFile string) tea.Msg {
+	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
+	repo := confluence.NewRepository(confluenceClient)
+	src := sheet.NewFileSource(sourceFile)
+
+	uc := usecase.NewFillScenarioUseCase(repo, src)
+	result, err := uc.Execute(pageURL)
+	return fillDoneMsg{err: err, result: result}
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func buildInputs(uc activeUseCase) []textinput.Model {
@@ -438,6 +500,9 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 	} else if uc == ucUpdateScenario {
 		// UC2: slot 3 = Job URL
 		inputs[fieldJobURL] = newInput("http://172.18.249.109:1014/cr-job/...", false)
+	} else if uc == ucFillScenario {
+		// UC4: slot 3 = spreadsheet path
+		inputs[fieldSourceFile] = newInput(`C:\Users\...\scenario.xlsx`, false)
 	} else {
 		// UC3: slot 2 = Job URL (no Page URL needed)
 		inputs[fieldJobURLUC3] = newInput("http://172.18.249.109:1014/cr-job/...", false)
