@@ -1,7 +1,9 @@
 // Package version holds the application version, injectable at build time.
 package version
 
-// Version is the KitQA release version. Override at build time with:
+// Version is the KitQA release version. Release builds inject the real value from
+// the git tag via -ldflags (see .github/workflows/release.yml); a plain local build
+// shows "dev" so it is never mistaken for an official release.
 //
 //	go build -ldflags "-X github.com/wirsal/kitqa/internal/version.Version=v1.2.3" ./cmd/main.go
-var Version = "v1.2.3"
+var Version = "dev"
