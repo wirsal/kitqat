@@ -420,13 +420,57 @@ func normalizeMatchText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// scenarioMatchOverlap is the fraction of a summary's tokens that must appear in the
+// table text to count as a match when neither string contains the other (handles
+// extra prefixes/wording differences between a Jira summary and a page Scenario).
+const scenarioMatchOverlap = 0.7
+
 // scenarioTextMatches reports whether a normalized ticket summary corresponds to a
-// table's normalized scenario text (either contains the other, both long enough).
+// table's normalized scenario text: one contains the other, or a strong majority of
+// the summary's words appear in the table text.
 func scenarioTextMatches(tableText, ticketNorm string) bool {
 	if len(ticketNorm) < scenarioMatchMinLen || len(tableText) < scenarioMatchMinLen {
 		return false
 	}
-	return strings.Contains(tableText, ticketNorm) || strings.Contains(ticketNorm, tableText)
+	if strings.Contains(tableText, ticketNorm) || strings.Contains(ticketNorm, tableText) {
+		return true
+	}
+
+	words := strings.Fields(ticketNorm)
+	if len(words) < 3 {
+		return false
+	}
+	tset := make(map[string]bool, len(strings.Fields(tableText)))
+	for _, w := range strings.Fields(tableText) {
+		tset[w] = true
+	}
+	hit := 0
+	for _, w := range words {
+		if tset[w] {
+			hit++
+		}
+	}
+	return float64(hit)/float64(len(words)) >= scenarioMatchOverlap
+}
+
+// scenarioMatchScore returns a comparable strength for the match between a summary
+// and a table's text, used to pick the best among several candidates.
+func scenarioMatchScore(tableText, ticketNorm string) int {
+	words := strings.Fields(ticketNorm)
+	if len(words) == 0 {
+		return 0
+	}
+	tset := make(map[string]bool, len(strings.Fields(tableText)))
+	for _, w := range strings.Fields(tableText) {
+		tset[w] = true
+	}
+	hit := 0
+	for _, w := range words {
+		if tset[w] {
+			hit++
+		}
+	}
+	return hit
 }
 
 // InjectJiraLinksByScenario injects a Jira structured-macro link into the
@@ -474,14 +518,15 @@ func InjectJiraLinksByScenario(storageHTML string, tickets []ScenarioTicket, ser
 		matchText := normalizeMatchText(
 			tableFieldText(table, "scenario") + " " + tableFieldText(table, "function"))
 
-		// Pick the unused ticket with the longest matching summary.
+		// Pick the unused ticket with the strongest matching summary.
 		var best *normTicket
+		bestScore := 0
 		for _, t := range norm {
-			if t.used {
+			if t.used || !scenarioTextMatches(matchText, t.norm) {
 				continue
 			}
-			if scenarioTextMatches(matchText, t.norm) && (best == nil || len(t.norm) > len(best.norm)) {
-				best = t
+			if score := scenarioMatchScore(matchText, t.norm); best == nil || score > bestScore {
+				best, bestScore = t, score
 			}
 		}
 		if best == nil {

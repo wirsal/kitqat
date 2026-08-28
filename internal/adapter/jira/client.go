@@ -132,6 +132,47 @@ func (c *Client) GetFields() ([]FieldMeta, error) {
 	return fields, nil
 }
 
+// GetIssueRaw fetches a single issue with all fields (and expanded issue links /
+// subtasks) and returns the raw JSON body — used to inspect how tests attach to a
+// parent issue before building the matching logic.
+func (c *Client) GetIssueRaw(key string) ([]byte, error) {
+	endpoint := c.baseURL + "/rest/api/2/issue/" + url.PathEscape(key) + "?fields=*all&expand=names"
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get issue %s: %w", key, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("jira authentication failed — check credentials")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("jira issue %s returned %d: %s", key, resp.StatusCode, truncate(string(body), 300))
+	}
+	return body, nil
+}
+
+// GetIssue fetches a single issue (all fields) as a parsed Issue.
+func (c *Client) GetIssue(key string) (*Issue, error) {
+	raw, err := c.GetIssueRaw(key)
+	if err != nil {
+		return nil, err
+	}
+	var issue Issue
+	if err := json.Unmarshal(raw, &issue); err != nil {
+		return nil, fmt.Errorf("decode issue %s: %w", key, err)
+	}
+	return &issue, nil
+}
+
 // Transition represents a Jira workflow transition.
 type Transition struct {
 	ID   string `json:"id"`

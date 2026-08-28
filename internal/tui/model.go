@@ -129,13 +129,13 @@ func New() Model {
 		{
 			title: "2. Update Scenario Detail",
 			uc:    ucUpdateScenario,
-			description: "After uploading Excel to CBAgnito,\n" +
-				"inject Jira ticket links into the\n" +
-				"'No. Test Case' cells on Confluence.\n\n" +
+			description: "Inject Jira ticket links into the\n" +
+				"'No. Test Case' cells on Confluence,\n" +
+				"matched from a Jira issue's tests.\n\n" +
 				"Fields:\n" +
 				"  • Username & Password\n" +
 				"  • Confluence page URL\n" +
-				"  • CBAgnito job URL",
+				"  • Jira issue (e.g. BRSF-16163)",
 		},
 		{
 			title: "3. Mark Tickets as Done",
@@ -459,9 +459,9 @@ func doDownload(username, password, pageURL, repoPath, project, output, testExec
 func doUpdateScenario(username, password, pageURL, jobURL string) tea.Msg {
 	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
 	repo := confluence.NewRepository(confluenceClient)
-	cbClient := cbagnito.NewClient(username, password)
+	jiraClient := jira.NewClient("https://jira.bri.co.id", username, password)
 
-	uc := usecase.NewUpdateScenarioUseCase(repo, cbClient)
+	uc := usecase.NewUpdateScenarioUseCase(repo, jiraClient)
 	result, err := uc.Execute(pageURL, jobURL)
 	return updateDoneMsg{err: err, result: result}
 }
@@ -503,8 +503,8 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 		inputs[fieldOutput] = newInputWithValue("test_cases.xlsx", false)
 		inputs[fieldTestExec] = newInput("optional, e.g. SPBRISURF-1234", false)
 	} else if uc == ucUpdateScenario {
-		// UC2: slot 3 = Job URL
-		inputs[fieldJobURL] = newInput("http://172.18.249.109:1014/cr-job/...", false)
+		// UC2: slot 3 = Jira issue (key or browse URL)
+		inputs[fieldJobURL] = newInput("Jira issue e.g. BRSF-16163", false)
 	} else if uc == ucFillScenario {
 		// UC4: slot 3 = spreadsheet path
 		inputs[fieldSourceFile] = newInput(`C:\Users\...\scenario.xlsx`, false)

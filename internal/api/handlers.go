@@ -94,9 +94,9 @@ func handleUpdateScenario(w http.ResponseWriter, r *http.Request) {
 
 	confluenceClient := confluence.NewClient(confluenceBaseURL, req.Username, req.Password)
 	repo := confluence.NewRepository(confluenceClient)
-	cbClient := cbagnito.NewClient(req.Username, req.Password)
+	jiraClient := jira.NewClient(jiraBaseURL, req.Username, req.Password)
 
-	uc := usecase.NewUpdateScenarioUseCase(repo, cbClient)
+	uc := usecase.NewUpdateScenarioUseCase(repo, jiraClient)
 	result, err := uc.Execute(req.PageURL, req.JobURL)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)

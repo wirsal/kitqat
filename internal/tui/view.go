@@ -108,7 +108,7 @@ var formLabelsUpdate = [fieldCountUC2]string{
 	"Username  :",
 	"Password  :",
 	"Page URL  :",
-	"Job URL   :",
+	"Jira Issue:",
 }
 
 var formLabelsSetDone = [fieldCountUC3]string{
