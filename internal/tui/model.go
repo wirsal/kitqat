@@ -19,7 +19,8 @@ import (
 type viewState int
 
 const (
-	stateMenu    viewState = iota
+	stateLogin   viewState = iota // one-time username/password entry, cached for the session
+	stateMenu
 	stateForm              // form input
 	stateRunning           // async operation in progress
 	stateResult            // success/error
@@ -68,25 +69,31 @@ type addTestExecMsg struct {
 	result *usecase.AddTestExecResult
 }
 
+// Username/password are entered once on the login screen and cached in the Model
+// for the rest of the session (see stateLogin) — use-case forms no longer carry
+// their own username/password fields.
 const (
-	fieldUsername   = 0
-	fieldPassword   = 1
-	fieldPageURL    = 2
-	fieldRepoPath   = 3
-	fieldProject    = 4 // UC1 only: project key (e.g. SPBRISURF)
-	fieldOutput     = 5 // UC1: output file path
-	fieldTestExec   = 6 // UC1 only: optional Test Execution key (slot 6)
-	fieldJobURL     = 3 // UC2: Jira issue (slot 3, after Page URL)
-	fieldJobURLUC3  = 2 // UC3: CBAgnito job URL (slot 2, no Page URL needed)
-	fieldSourceFile = 3 // UC4: spreadsheet path (slot 3, after Page URL)
-	fieldTestExecTE = 3 // UC5: Test Execution issue / JQL (slot 3, after Page URL)
+	fieldPageURL    = 0
+	fieldRepoPath   = 1
+	fieldProject    = 2 // UC1 only: project key (e.g. SPBRISURF)
+	fieldOutput     = 3 // UC1: output file path
+	fieldTestExec   = 4 // UC1 only: optional Test Execution key (slot 4)
+	fieldJobURL     = 1 // UC2: Jira issue (slot 1, after Page URL)
+	fieldJobURLUC3  = 0 // UC3: CBAgnito job URL (slot 0, no Page URL needed)
+	fieldSourceFile = 1 // UC4: spreadsheet path (slot 1, after Page URL)
+	fieldTestExecTE = 1 // UC5: Test Execution issue / JQL (slot 1, after Page URL)
 
-	fieldCountUC1 = 7 // UC1 has 7 input fields (last one, Test Execution, is optional)
-	fieldCountUC2 = 4 // UC2 has 4 input fields
-	fieldCountUC3 = 3 // UC3 has 3 input fields (username, password, job URL)
-	fieldCountUC4 = 4 // UC4 has 4 input fields (username, password, page URL, sheet file)
-	fieldCountUC5 = 4 // UC5 has 4 input fields (username, password, page URL, test exec)
-	fieldCount    = 7 // max — always allocate this many inputs
+	fieldCountUC1 = 5 // UC1 has 5 input fields (last one, Test Execution, is optional)
+	fieldCountUC2 = 2 // UC2 has 2 input fields
+	fieldCountUC3 = 1 // UC3 has 1 input field (job URL)
+	fieldCountUC4 = 2 // UC4 has 2 input fields (page URL, sheet file)
+	fieldCountUC5 = 2 // UC5 has 2 input fields (page URL, test exec)
+	fieldCount    = 5 // max — always allocate this many inputs
+
+	// Login screen (stateLogin) field indices — separate from the use-case forms above.
+	loginFieldUsername = 0
+	loginFieldPassword = 1
+	loginFieldCount    = 2
 )
 
 type Model struct {
@@ -101,6 +108,11 @@ type Model struct {
 	resultErr bool
 	width     int
 	height    int
+
+	// username/password are entered once on the login screen and cached here for
+	// the rest of the session — every use case reuses them without re-prompting.
+	username string
+	password string
 }
 
 func New() Model {
@@ -115,7 +127,6 @@ func New() Model {
 				"cells that already have content.\n\n" +
 				"Runs before step 1.\n\n" +
 				"Fields:\n" +
-				"  • Username & Password\n" +
 				"  • Confluence page URL\n" +
 				"  • Sheet file (.xlsx / .csv)",
 		},
@@ -126,7 +137,6 @@ func New() Model {
 				"Scenario Detail page and export to\n" +
 				"XLSX format ready to upload to CBAgnito.\n\n" +
 				"Fields:\n" +
-				"  • Username & Password\n" +
 				"  • Confluence page URL\n" +
 				"  • Repo Path (default folder)\n" +
 				"  • Project key (default: SPBRISURF)\n" +
@@ -140,7 +150,6 @@ func New() Model {
 				"'No. Test Case' cells on Confluence,\n" +
 				"matched from a Jira issue's tests.\n\n" +
 				"Fields:\n" +
-				"  • Username & Password\n" +
 				"  • Confluence page URL\n" +
 				"  • Jira issue (e.g. BRSF-16163)",
 		},
@@ -151,7 +160,6 @@ func New() Model {
 				"filter) at the top of a Confluence\n" +
 				"Scenario Detail page.\n\n" +
 				"Fields:\n" +
-				"  • Username & Password\n" +
 				"  • Confluence page URL\n" +
 				"  • Test Execution issue (BRSF-16163)\n" +
 				"    or a full JQL filter",
@@ -163,7 +171,6 @@ func New() Model {
 				"Execution: set the run status to PASS\n" +
 				"and transition the issue to Done.\n\n" +
 				"Fields:\n" +
-				"  • Username & Password\n" +
 				"  • Test Execution issue (BRSF-16163)",
 		},
 		{
@@ -178,14 +185,19 @@ func New() Model {
 	s.Style = spinnerStyle
 
 	return Model{
-		state:   stateMenu,
-		items:   items,
-		cursor:  0,
-		spinner: s,
+		state:     stateLogin,
+		items:     items,
+		cursor:    0,
+		spinner:   s,
+		inputs:    buildLoginInputs(),
+		formFocus: 0,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.state == stateLogin && len(m.inputs) > 0 {
+		return m.inputs[0].Focus()
+	}
 	return nil
 }
 
@@ -312,6 +324,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
+	case stateLogin:
+		return m.updateLogin(msg)
 	case stateMenu:
 		return m.updateMenu(msg)
 	case stateForm:
@@ -320,6 +334,60 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateResult(msg)
 	}
 	return m, nil
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+// Username/password are collected once here and cached on the Model for the rest
+// of the session; every use case reads m.username/m.password instead of asking again.
+
+func (m Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "tab", "down":
+		return m.loginShift(+1)
+	case "shift+tab", "up":
+		return m.loginShift(-1)
+	case "enter":
+		if m.formFocus == loginFieldCount {
+			if strings.TrimSpace(m.inputs[loginFieldUsername].Value()) == "" {
+				m.formFocus = loginFieldUsername
+				return m, m.inputs[loginFieldUsername].Focus()
+			}
+			m.username = m.inputs[loginFieldUsername].Value()
+			m.password = m.inputs[loginFieldPassword].Value()
+			m.state = stateMenu
+			m.inputs = nil
+			m.formFocus = 0
+			return m, nil
+		}
+		return m.loginShift(+1)
+	default:
+		if m.formFocus < loginFieldCount {
+			var cmd tea.Cmd
+			m.inputs[m.formFocus], cmd = m.inputs[m.formFocus].Update(msg)
+			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+func (m Model) loginShift(delta int) (tea.Model, tea.Cmd) {
+	if m.formFocus < loginFieldCount {
+		m.inputs[m.formFocus].Blur()
+	}
+	m.formFocus = (m.formFocus + delta + loginFieldCount + 1) % (loginFieldCount + 1)
+	if m.formFocus < loginFieldCount {
+		return m, m.inputs[m.formFocus].Focus()
+	}
+	return m, nil
+}
+
+func buildLoginInputs() []textinput.Model {
+	inputs := make([]textinput.Model, loginFieldCount)
+	inputs[loginFieldUsername] = newInput("e.g. wirsal.dev", false)
+	inputs[loginFieldPassword] = newInput("your password", true)
+	return inputs
 }
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
@@ -336,6 +404,13 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+	case "c":
+		// Change cached credentials without exiting the app.
+		m.state = stateLogin
+		m.inputs = buildLoginInputs()
+		m.inputs[loginFieldUsername].SetValue(m.username)
+		m.formFocus = 0
+		return m, m.inputs[0].Focus()
 	case "enter":
 		item := m.items[m.cursor]
 		if item.isExit {
@@ -414,8 +489,8 @@ func (m Model) formShift(delta int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) startAction() (tea.Model, tea.Cmd) {
-	username := m.inputs[fieldUsername].Value()
-	password := m.inputs[fieldPassword].Value()
+	username := m.username
+	password := m.password
 	pageURL := m.inputs[fieldPageURL].Value()
 
 	m.state = stateRunning
@@ -560,8 +635,6 @@ func doAddTestExec(username, password, pageURL, testExec string) tea.Msg {
 func buildInputs(uc activeUseCase) []textinput.Model {
 	inputs := make([]textinput.Model, fieldCount)
 
-	inputs[fieldUsername] = newInput("e.g. wirsal.dev", false)
-	inputs[fieldPassword] = newInput("your password", true)
 	inputs[fieldPageURL] = newInput("https://confluence.bri.co.id/x/...", false)
 
 	if uc == ucDownload {
@@ -570,16 +643,16 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 		inputs[fieldOutput] = newInputWithValue("test_cases.xlsx", false)
 		inputs[fieldTestExec] = newInput("optional, e.g. SPBRISURF-1234", false)
 	} else if uc == ucUpdateScenario {
-		// UC2: slot 3 = Jira issue (key or browse URL)
+		// UC2: slot 1 = Jira issue (key or browse URL)
 		inputs[fieldJobURL] = newInput("Jira issue e.g. BRSF-16163", false)
 	} else if uc == ucFillScenario {
-		// UC4: slot 3 = spreadsheet path
+		// UC4: slot 1 = spreadsheet path
 		inputs[fieldSourceFile] = newInput(`C:\Users\...\scenario.xlsx`, false)
 	} else if uc == ucAddTestExec {
-		// UC5: slot 3 = Test Execution issue or JQL filter
+		// UC5: slot 1 = Test Execution issue or JQL filter
 		inputs[fieldTestExecTE] = newInput("BRSF-16163 or a JQL filter", false)
 	} else {
-		// UC3: slot 2 = Jira Test Execution issue (no Page URL needed)
+		// UC3: slot 0 = Jira Test Execution issue (no Page URL needed)
 		inputs[fieldJobURLUC3] = newInput("Jira Test Execution e.g. BRSF-16163", false)
 	}
 

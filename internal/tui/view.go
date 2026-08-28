@@ -21,10 +21,14 @@ func (m Model) View() string {
 
 	var helpText string
 	switch m.state {
+	case stateLogin:
+		helpText = "tab/↑↓: navigate fields | enter: confirm | ctrl+c: quit"
 	case stateForm:
 		helpText = "tab/↑↓: navigate fields | enter: confirm | esc: back | q: quit"
 	case stateResult:
 		helpText = "enter/esc: back to menu | q: quit"
+	case stateMenu:
+		helpText = "j/k: navigate | enter: select | c: change credentials | q: quit"
 	default:
 		helpText = "j/k: navigate | enter: select | esc: back | q: quit"
 	}
@@ -41,7 +45,12 @@ func (m Model) renderSidebar() string {
 	sb.WriteString(appTitleStyle.Render(appTitle))
 	sb.WriteString(" ")
 	sb.WriteString(versionStyle.Render(version.Version))
-	sb.WriteString("\n\n")
+	sb.WriteString("\n")
+	if m.username != "" {
+		sb.WriteString(helpStyle.Render("Logged in as: " + m.username))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
 	sb.WriteString(sectionLabelStyle.Render("> How to Use"))
 	sb.WriteString("\n")
 
@@ -64,6 +73,8 @@ func (m Model) renderSidebar() string {
 
 func (m Model) renderContent() string {
 	switch m.state {
+	case stateLogin:
+		return m.renderLogin()
 	case stateMenu:
 		return m.renderMenuContent()
 	case stateForm:
@@ -74,6 +85,42 @@ func (m Model) renderContent() string {
 		return m.renderResult()
 	}
 	return contentStyle.Render("")
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+
+func (m Model) renderLogin() string {
+	if m.inputs == nil {
+		return contentStyle.Render("")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(contentTitleStyle.Render("Login"))
+	sb.WriteString("\n")
+	sb.WriteString(dividerStyle.Render(divider[:48]))
+	sb.WriteString("\n\n")
+	sb.WriteString(descStyle.Render("Entered once and cached for this session —\nevery use case below reuses it."))
+	sb.WriteString("\n\n")
+
+	for i := 0; i < loginFieldCount; i++ {
+		var lbl string
+		if m.formFocus == i {
+			lbl = inputLabelFocusStyle.Render(loginFieldLabels[i])
+		} else {
+			lbl = labelStyle.Render(loginFieldLabels[i])
+		}
+		sb.WriteString(lbl + " " + m.inputs[i].View())
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("\n")
+	if m.formFocus == loginFieldCount {
+		sb.WriteString(btnFocusStyle.Render("  Continue  "))
+	} else {
+		sb.WriteString(btnBlurStyle.Render(" Continue "))
+	}
+
+	return contentStyle.Render(sb.String())
 }
 
 func (m Model) renderMenuContent() string {
@@ -95,8 +142,6 @@ func (m Model) renderMenuContent() string {
 // ── Form ──────────────────────────────────────────────────────────────────────
 
 var formLabelsDownload = [fieldCountUC1]string{
-	"Username  :",
-	"Password  :",
 	"Page URL  :",
 	"Repo Path :",
 	"Project   :",
@@ -105,30 +150,27 @@ var formLabelsDownload = [fieldCountUC1]string{
 }
 
 var formLabelsUpdate = [fieldCountUC2]string{
-	"Username  :",
-	"Password  :",
 	"Page URL  :",
 	"Jira Issue:",
 }
 
 var formLabelsSetDone = [fieldCountUC3]string{
-	"Username  :",
-	"Password  :",
 	"Test Exec :",
 }
 
 var formLabelsFill = [fieldCountUC4]string{
-	"Username  :",
-	"Password  :",
 	"Page URL  :",
 	"Sheet File:",
 }
 
 var formLabelsAddTestExec = [fieldCountUC5]string{
-	"Username  :",
-	"Password  :",
 	"Page URL  :",
 	"Test Exec :",
+}
+
+var loginFieldLabels = [loginFieldCount]string{
+	"Username  :",
+	"Password  :",
 }
 
 func (m Model) formLabel(i int) string {
