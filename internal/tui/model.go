@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -19,11 +20,11 @@ import (
 type viewState int
 
 const (
-	stateLogin   viewState = iota // one-time username/password entry, cached for the session
+	stateLogin viewState = iota // one-time username/password entry, cached for the session
 	stateMenu
-	stateForm              // form input
-	stateRunning           // async operation in progress
-	stateResult            // success/error
+	stateForm    // form input
+	stateRunning // async operation in progress
+	stateResult  // success/error
 )
 
 type activeUseCase int
@@ -67,6 +68,13 @@ type fillDoneMsg struct {
 type addTestExecMsg struct {
 	err    error
 	result *usecase.AddTestExecResult
+}
+
+// templateDoneMsg is the result of generating a blank UC0 spreadsheet
+// template (see startGenerateTemplate / doGenerateTemplate).
+type templateDoneMsg struct {
+	err    error
+	output string
 }
 
 // Username/password are entered once on the login screen and cached in the Model
@@ -113,6 +121,12 @@ type Model struct {
 	// the rest of the session — every use case reuses them without re-prompting.
 	username string
 	password string
+
+	// templateInProgress is true while a UC0 "generate blank template" action
+	// (see startGenerateTemplate) is running or has just finished — activeUC
+	// stays ucFillScenario for both that and a normal Fill run, so this flag is
+	// what renderRunning/renderResult/activeTitle use to tell them apart.
+	templateInProgress bool
 }
 
 func New() Model {
@@ -128,7 +142,9 @@ func New() Model {
 				"Runs before step 1.\n\n" +
 				"Fields:\n" +
 				"  • Confluence page URL\n" +
-				"  • Sheet file (.xlsx / .csv)",
+				"  • Sheet file (.xlsx / .csv)\n\n" +
+				"No sheet yet? Press 't' on the Fill\n" +
+				"button to download a blank template.",
 		},
 		{
 			title: "1. Download TC to Excel",
@@ -296,6 +312,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resultMsg = strings.TrimRight(sb.String(), "\n")
 		}
 
+	case templateDoneMsg:
+		m.state = stateResult
+		if msg.err != nil {
+			m.resultErr = true
+			m.resultMsg = msg.err.Error()
+		} else {
+			m.resultErr = false
+			m.resultMsg = "Blank template saved to: " + msg.output +
+				"\n\nFill it in, then point \"Sheet File\" at it and press Fill."
+		}
+
 	case addTestExecMsg:
 		m.state = stateResult
 		if msg.err != nil {
@@ -435,6 +462,7 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateMenu
 		m.inputs = nil
 		m.formFocus = 0
+		m.templateInProgress = false
 		return m, nil
 	case "tab", "down":
 		return m.formShift(+1)
@@ -446,6 +474,11 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.formShift(+1)
 	default:
+		// "t" on the UC0 button (not while typing in a text field) generates a
+		// blank spreadsheet template instead of submitting the form.
+		if msg.String() == "t" && m.activeUC == ucFillScenario && m.formFocus == m.activeFieldButton() {
+			return m.startGenerateTemplate()
+		}
 		if m.formFocus < m.activeFieldCount() {
 			var cmd tea.Cmd
 			m.inputs[m.formFocus], cmd = m.inputs[m.formFocus].Update(msg)
@@ -494,6 +527,7 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 	pageURL := m.inputs[fieldPageURL].Value()
 
 	m.state = stateRunning
+	m.templateInProgress = false
 
 	if m.activeUC == ucDownload {
 		repoPath := m.inputs[fieldRepoPath].Value()
@@ -541,6 +575,40 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 	)
 }
 
+// startGenerateTemplate handles the UC0-only "t" hotkey: it writes a blank
+// spreadsheet with the columns UC0 reads, deriving the output path from
+// whatever the "Sheet File" field currently holds (or a default filename in
+// the working directory if that field is empty), and reuses the same
+// stateRunning → async cmd → stateResult flow as every other action.
+func (m Model) startGenerateTemplate() (tea.Model, tea.Cmd) {
+	outputPath := defaultTemplatePath(m.inputs[fieldSourceFile].Value())
+
+	m.state = stateRunning
+	m.templateInProgress = true
+	return m, tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg { return doGenerateTemplate(outputPath) },
+	)
+}
+
+// defaultTemplatePath picks where to save a generated template: next to the
+// path already typed into "Sheet File" (so it lands exactly where UC0 is
+// about to look for it), or a fixed default name in the working directory
+// when that field is still empty.
+func defaultTemplatePath(sheetFieldValue string) string {
+	const defaultName = "scenario_template.xlsx"
+
+	trimmed := strings.TrimSpace(strings.ReplaceAll(sheetFieldValue, `"`, ""))
+	if trimmed == "" {
+		return defaultName
+	}
+	dir := filepath.Dir(trimmed)
+	if dir == "" || dir == "." {
+		return defaultName
+	}
+	return filepath.Join(dir, defaultName)
+}
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 func (m Model) updateResult(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -550,6 +618,7 @@ func (m Model) updateResult(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "enter", "backspace":
 		m.state = stateMenu
 		m.resultMsg = ""
+		m.templateInProgress = false
 	}
 	return m, nil
 }
@@ -617,6 +686,13 @@ func doFillScenario(username, password, pageURL, sourceFile string) tea.Msg {
 	uc := usecase.NewFillScenarioUseCase(repo, src)
 	result, err := uc.Execute(pageURL)
 	return fillDoneMsg{err: err, result: result}
+}
+
+// ── Generate Template logic ───────────────────────────────────────────────────
+
+func doGenerateTemplate(outputPath string) tea.Msg {
+	err := excel.WriteScenarioTemplate(outputPath)
+	return templateDoneMsg{err: err, output: outputPath}
 }
 
 // ── Add Test Execution logic ──────────────────────────────────────────────────

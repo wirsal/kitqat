@@ -206,6 +206,9 @@ func (m Model) activeTitle() string {
 	case ucSetDone:
 		return "Mark Tickets as Done"
 	case ucFillScenario:
+		if m.templateInProgress {
+			return "Generate Blank Template"
+		}
 		return "Fill Scenario & Function"
 	case ucAddTestExec:
 		return "Add Test Execution Table"
@@ -255,6 +258,8 @@ func (m Model) renderForm() string {
 		} else {
 			sb.WriteString(btnBlurStyle.Render(" Fill "))
 		}
+		sb.WriteString("\n\n")
+		sb.WriteString(helpStyle.Render("t: no sheet yet? generate a blank template"))
 	case ucAddTestExec:
 		if m.formFocus == m.activeFieldButton() {
 			sb.WriteString(btnFocusStyle.Render("  Add Table  "))
@@ -276,12 +281,14 @@ func (m Model) renderForm() string {
 
 func (m Model) renderRunning() string {
 	var runText string
-	switch m.activeUC {
-	case ucFillScenario:
+	switch {
+	case m.activeUC == ucFillScenario && m.templateInProgress:
+		runText = "Generating blank spreadsheet template...\nPlease wait."
+	case m.activeUC == ucFillScenario:
 		runText = "Reading spreadsheet and updating Confluence...\nPlease wait."
-	case ucUpdateScenario:
+	case m.activeUC == ucUpdateScenario:
 		runText = "Updating Scenario Detail page on Confluence...\nPlease wait."
-	case ucAddTestExec:
+	case m.activeUC == ucAddTestExec:
 		runText = "Inserting Test Execution table on Confluence...\nPlease wait."
 	default:
 		runText = "Fetching test cases from Confluence...\nPlease wait."

@@ -51,6 +51,19 @@ var scenarioAliases = map[string]string{
 	"hasil yang diharapkan": "expected_result",
 }
 
+// ScenarioTemplateHeaders is the canonical, human-facing column order for a
+// blank UC0 input spreadsheet. Every label here has a matching key in
+// scenarioAliases above, so a template filled in and fed back through UC0
+// (Fill Scenario & Function) is guaranteed to parse.
+var ScenarioTemplateHeaders = []string{
+	"No. Test Case",
+	"Scenario",
+	"Function",
+	"Input Data",
+	"Steps",
+	"Expected Result",
+}
+
 // headerScanLimit is how many leading rows are searched for the header row.
 // The exporter writes its own header on rows 1-2 with data from row 3, so a
 // small window is enough while still tolerating title/banner rows above it.
