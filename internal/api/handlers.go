@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/wirsal/kitqa/internal/adapter/cbagnito"
 	"github.com/wirsal/kitqa/internal/adapter/confluence"
 	"github.com/wirsal/kitqa/internal/adapter/excel"
 	"github.com/wirsal/kitqa/internal/adapter/jira"
@@ -118,9 +117,8 @@ func handleSetDone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jiraClient := jira.NewClient(jiraBaseURL, req.Username, req.Password)
-	cbClient := cbagnito.NewClient(req.Username, req.Password)
 
-	uc := usecase.NewSetDoneUseCase(jiraClient, cbClient)
+	uc := usecase.NewSetDoneUseCase(jiraClient)
 	result, err := uc.Execute(req.JobURL)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)

@@ -132,40 +132,6 @@ func (uc *UpdateScenarioUseCase) fetchSummaries(keys []string) (map[string]strin
 	return m, nil
 }
 
-// extractTestKeys pulls the test keys from a Test Execution's "Tests association"
-// custom field — a list of {testKey, testRunId} objects. Found by shape so the exact
-// custom-field id need not be hard-coded.
-func extractTestKeys(fields map[string]interface{}) []string {
-	for k, v := range fields {
-		if !strings.HasPrefix(k, "customfield_") {
-			continue
-		}
-		arr, ok := v.([]interface{})
-		if !ok || len(arr) == 0 {
-			continue
-		}
-		keys := make([]string, 0, len(arr))
-		valid := true
-		for _, it := range arr {
-			m, ok := it.(map[string]interface{})
-			if !ok {
-				valid = false
-				break
-			}
-			tk, ok := m["testKey"].(string)
-			if !ok || tk == "" {
-				valid = false
-				break
-			}
-			keys = append(keys, tk)
-		}
-		if valid && len(keys) > 0 {
-			return keys
-		}
-	}
-	return nil
-}
-
 // jiraIssueKey extracts the issue key from a browse URL or bare key.
 func jiraIssueKey(s string) string {
 	return reJiraIssueKey.FindString(strings.TrimSpace(s))

@@ -3,79 +3,102 @@ package usecase
 import (
 	"fmt"
 
-	"github.com/wirsal/kitqa/internal/adapter/cbagnito"
 	"github.com/wirsal/kitqa/internal/adapter/jira"
 )
 
-// SetDoneUseCase fetches ticket entries from a CBAgnito job and transitions
-// each corresponding Jira issue to the "Done" state.
+// SetDoneUseCase reads the tests of a Jira Test Execution and, for each one, sets
+// its Xray test run status to PASS and transitions the test issue to Done.
 type SetDoneUseCase struct {
-	jiraClient     *jira.Client
-	cbagnitoClient *cbagnito.Client
+	jiraClient *jira.Client
 }
 
-func NewSetDoneUseCase(jc *jira.Client, cb *cbagnito.Client) *SetDoneUseCase {
-	return &SetDoneUseCase{jiraClient: jc, cbagnitoClient: cb}
+func NewSetDoneUseCase(jc *jira.Client) *SetDoneUseCase {
+	return &SetDoneUseCase{jiraClient: jc}
 }
 
 // SetDoneResult summarises the outcome.
 type SetDoneResult struct {
-	Total   int
-	Updated int
-	Skipped int      // already in done state or no transition found
-	Failed  []string // issue keys that returned an error
+	Total    int      // number of tests in the execution
+	Passed   int      // test runs set to PASS
+	Done     int      // test issues transitioned to Done
+	Skipped  int      // issues with no Done transition available
+	Failed   []string // issue keys that returned an error in either step
+	ExecKey  string   // the Test Execution issue key
+	ExecDone bool     // whether the Test Execution issue itself was transitioned
 }
 
-// Execute fetches tickets from CBAgnito then transitions each Jira issue to Done.
-func (uc *SetDoneUseCase) Execute(jobURL string) (*SetDoneResult, error) {
-	entries, err := uc.cbagnitoClient.GetJobTickets(jobURL)
+// Execute reads the Test Execution's tests and, per test, sets the run status to
+// PASS and transitions the issue to Done. `source` is a Test Execution issue key or
+// browse URL (e.g. BRSF-16163).
+func (uc *SetDoneUseCase) Execute(source string) (*SetDoneResult, error) {
+	key := jiraIssueKey(source)
+	if key == "" {
+		return nil, fmt.Errorf("enter a Jira Test Execution issue (e.g. BRSF-16163)")
+	}
+
+	issue, err := uc.jiraClient.GetIssue(key)
 	if err != nil {
-		return nil, fmt.Errorf("fetch CBAgnito tickets: %w", err)
+		return nil, fmt.Errorf("fetch Jira issue %s: %w", key, err)
 	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("CBAgnito job returned no ticket entries")
-	}
-
-	// Deduplicate Jira keys (CBAgnito may repeat entries).
-	seen := make(map[string]bool)
-	var keys []string
-	for _, e := range entries {
-		if e.TicketIssue != "" && !seen[e.TicketIssue] {
-			seen[e.TicketIssue] = true
-			keys = append(keys, e.TicketIssue)
-		}
+	tests := extractTests(issue.Fields)
+	if len(tests) == 0 {
+		return nil, fmt.Errorf("issue %s has no associated tests", key)
 	}
 
-	result := &SetDoneResult{Total: len(keys)}
+	result := &SetDoneResult{Total: len(tests), ExecKey: key}
 
-	// Cache transition ID per project key (e.g. "SPBRISURF") — all tickets in
-	// one project share the same workflow.
+	// Transition ID is shared per project workflow — cache it.
 	transitionCache := make(map[string]string)
 
-	for _, issueKey := range keys {
-		project := projectOf(issueKey)
+	for _, t := range tests {
+		failed := false
 
+		// 1. Set the Xray test run status to PASS.
+		if t.RunID > 0 {
+			if err := uc.jiraClient.SetTestRunStatus(t.RunID, "PASS"); err != nil {
+				result.Failed = append(result.Failed, t.Key)
+				failed = true
+			} else {
+				result.Passed++
+			}
+		}
+
+		// 2. Transition the test issue to Done.
+		project := projectOf(t.Key)
 		transID, cached := transitionCache[project]
 		if !cached {
-			transitions, err := uc.jiraClient.GetTransitions(issueKey)
+			transitions, err := uc.jiraClient.GetTransitions(t.Key)
 			if err != nil {
-				result.Failed = append(result.Failed, issueKey)
+				if !failed {
+					result.Failed = append(result.Failed, t.Key)
+				}
 				continue
 			}
 			transID = jira.FindDoneTransitionID(transitions)
 			transitionCache[project] = transID
 		}
-
 		if transID == "" {
 			result.Skipped++
 			continue
 		}
-
-		if err := uc.jiraClient.TransitionIssue(issueKey, transID); err != nil {
-			result.Failed = append(result.Failed, issueKey)
+		if err := uc.jiraClient.TransitionIssue(t.Key, transID); err != nil {
+			if !failed {
+				result.Failed = append(result.Failed, t.Key)
+			}
 			continue
 		}
-		result.Updated++
+		result.Done++
+	}
+
+	// Finally, transition the Test Execution issue itself to Done (e.g. CLOSED).
+	if transitions, err := uc.jiraClient.GetTransitions(key); err == nil {
+		if id := jira.FindDoneTransitionID(transitions); id != "" {
+			if err := uc.jiraClient.TransitionIssue(key, id); err == nil {
+				result.ExecDone = true
+			} else {
+				result.Failed = append(result.Failed, key)
+			}
+		}
 	}
 
 	return result, nil

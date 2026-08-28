@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/wirsal/kitqa/internal/adapter/cbagnito"
 	"github.com/wirsal/kitqa/internal/adapter/confluence"
 	"github.com/wirsal/kitqa/internal/adapter/excel"
 	"github.com/wirsal/kitqa/internal/adapter/jira"
@@ -33,6 +32,7 @@ const (
 	ucUpdateScenario               // update Scenario Detail page with Jira links
 	ucSetDone                      // transition Jira tickets from CBAgnito job to Done
 	ucFillScenario                 // fill Scenario/Function cells from a spreadsheet
+	ucAddTestExec                  // insert a Test Execution filter table on the page
 )
 
 type menuItem struct {
@@ -63,6 +63,11 @@ type fillDoneMsg struct {
 	result *usecase.FillResult
 }
 
+type addTestExecMsg struct {
+	err    error
+	result *usecase.AddTestExecResult
+}
+
 const (
 	fieldUsername   = 0
 	fieldPassword   = 1
@@ -71,14 +76,16 @@ const (
 	fieldProject    = 4 // UC1 only: project key (e.g. SPBRISURF)
 	fieldOutput     = 5 // UC1: output file path
 	fieldTestExec   = 6 // UC1 only: optional Test Execution key (slot 6)
-	fieldJobURL     = 3 // UC2: CBAgnito job URL (slot 3, after Page URL)
+	fieldJobURL     = 3 // UC2: Jira issue (slot 3, after Page URL)
 	fieldJobURLUC3  = 2 // UC3: CBAgnito job URL (slot 2, no Page URL needed)
 	fieldSourceFile = 3 // UC4: spreadsheet path (slot 3, after Page URL)
+	fieldTestExecTE = 3 // UC5: Test Execution issue / JQL (slot 3, after Page URL)
 
 	fieldCountUC1 = 7 // UC1 has 7 input fields (last one, Test Execution, is optional)
 	fieldCountUC2 = 4 // UC2 has 4 input fields
 	fieldCountUC3 = 3 // UC3 has 3 input fields (username, password, job URL)
 	fieldCountUC4 = 4 // UC4 has 4 input fields (username, password, page URL, sheet file)
+	fieldCountUC5 = 4 // UC5 has 4 input fields (username, password, page URL, test exec)
 	fieldCount    = 7 // max — always allocate this many inputs
 )
 
@@ -138,16 +145,29 @@ func New() Model {
 				"  • Jira issue (e.g. BRSF-16163)",
 		},
 		{
-			title: "3. Mark Tickets as Done",
-			uc:    ucSetDone,
-			description: "Transition all Jira tickets from a\n" +
-				"CBAgnito job to 'Done' status.\n\n" +
+			title: "3. Add Test Execution Table",
+			uc:    ucAddTestExec,
+			description: "Insert a Test Execution table (Jira\n" +
+				"filter) at the top of a Confluence\n" +
+				"Scenario Detail page.\n\n" +
 				"Fields:\n" +
 				"  • Username & Password\n" +
-				"  • CBAgnito job URL",
+				"  • Confluence page URL\n" +
+				"  • Test Execution issue (BRSF-16163)\n" +
+				"    or a full JQL filter",
 		},
 		{
-			title:       "4. Exit",
+			title: "4. Mark Tickets as Done",
+			uc:    ucSetDone,
+			description: "For every test in a Jira Test\n" +
+				"Execution: set the run status to PASS\n" +
+				"and transition the issue to Done.\n\n" +
+				"Fields:\n" +
+				"  • Username & Password\n" +
+				"  • Test Execution issue (BRSF-16163)",
+		},
+		{
+			title:       "5. Exit",
 			isExit:      true,
 			description: "Exit the application.",
 		},
@@ -221,13 +241,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resultErr = false
 			r := msg.result
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Total    : %d ticket(s)\n", r.Total))
-			sb.WriteString(fmt.Sprintf("Done     : %d ticket(s)\n", r.Updated))
-			sb.WriteString(fmt.Sprintf("Skipped  : %d ticket(s)\n", r.Skipped))
+			fmt.Fprintf(&sb, "Total    : %d test(s)\n", r.Total)
+			fmt.Fprintf(&sb, "Passed   : %d run(s) set to PASS\n", r.Passed)
+			fmt.Fprintf(&sb, "Done     : %d issue(s) transitioned\n", r.Done)
+			if r.Skipped > 0 {
+				fmt.Fprintf(&sb, "Skipped  : %d (no Done transition)\n", r.Skipped)
+			}
+			execState := "not transitioned"
+			if r.ExecDone {
+				execState = "transitioned to Done"
+			}
+			fmt.Fprintf(&sb, "Exec %s : %s\n", r.ExecKey, execState)
 			if len(r.Failed) > 0 {
 				sb.WriteString("Failed   : " + strings.Join(r.Failed, ", "))
 			} else {
-				sb.WriteString("All tickets processed successfully.")
+				sb.WriteString("All tests and the execution set to PASS/Done.")
 			}
 			m.resultMsg = sb.String()
 		}
@@ -254,6 +282,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sb.WriteString("\nPage already up to date — nothing was written.")
 			}
 			m.resultMsg = strings.TrimRight(sb.String(), "\n")
+		}
+
+	case addTestExecMsg:
+		m.state = stateResult
+		if msg.err != nil {
+			m.resultErr = true
+			m.resultMsg = msg.err.Error()
+		} else {
+			m.resultErr = false
+			r := msg.result
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "Page   : %s\n", r.PageTitle)
+			fmt.Fprintf(&sb, "Filter : %s\n\n", r.JQL)
+			if r.Added {
+				sb.WriteString("Test Execution table inserted.")
+			} else {
+				sb.WriteString("Table already present — nothing was written.")
+			}
+			m.resultMsg = sb.String()
 		}
 
 	case tea.KeyMsg:
@@ -343,6 +390,8 @@ func (m Model) activeFieldCount() int {
 		return fieldCountUC3
 	case ucFillScenario:
 		return fieldCountUC4
+	case ucAddTestExec:
+		return fieldCountUC5
 	}
 	return fieldCountUC1
 }
@@ -398,6 +447,14 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			m.spinner.Tick,
 			func() tea.Msg { return doFillScenario(username, password, pageURL, sourceFile) },
+		)
+	}
+
+	if m.activeUC == ucAddTestExec {
+		testExec := strings.TrimSpace(m.inputs[fieldTestExecTE].Value())
+		return m, tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg { return doAddTestExec(username, password, pageURL, testExec) },
 		)
 	}
 
@@ -468,11 +525,10 @@ func doUpdateScenario(username, password, pageURL, jobURL string) tea.Msg {
 
 // ── Set Done logic ────────────────────────────────────────────────────────────
 
-func doSetDone(username, password, jobURL string) tea.Msg {
+func doSetDone(username, password, testExec string) tea.Msg {
 	jiraClient := jira.NewClient("https://jira.bri.co.id", username, password)
-	cbClient := cbagnito.NewClient(username, password)
-	uc := usecase.NewSetDoneUseCase(jiraClient, cbClient)
-	result, err := uc.Execute(jobURL)
+	uc := usecase.NewSetDoneUseCase(jiraClient)
+	result, err := uc.Execute(testExec)
 	return setDoneMsg{err: err, result: result}
 }
 
@@ -486,6 +542,17 @@ func doFillScenario(username, password, pageURL, sourceFile string) tea.Msg {
 	uc := usecase.NewFillScenarioUseCase(repo, src)
 	result, err := uc.Execute(pageURL)
 	return fillDoneMsg{err: err, result: result}
+}
+
+// ── Add Test Execution logic ──────────────────────────────────────────────────
+
+func doAddTestExec(username, password, pageURL, testExec string) tea.Msg {
+	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
+	repo := confluence.NewRepository(confluenceClient)
+
+	uc := usecase.NewAddTestExecUseCase(repo)
+	result, err := uc.Execute(pageURL, testExec)
+	return addTestExecMsg{err: err, result: result}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -508,9 +575,12 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 	} else if uc == ucFillScenario {
 		// UC4: slot 3 = spreadsheet path
 		inputs[fieldSourceFile] = newInput(`C:\Users\...\scenario.xlsx`, false)
+	} else if uc == ucAddTestExec {
+		// UC5: slot 3 = Test Execution issue or JQL filter
+		inputs[fieldTestExecTE] = newInput("BRSF-16163 or a JQL filter", false)
 	} else {
-		// UC3: slot 2 = Job URL (no Page URL needed)
-		inputs[fieldJobURLUC3] = newInput("http://172.18.249.109:1014/cr-job/...", false)
+		// UC3: slot 2 = Jira Test Execution issue (no Page URL needed)
+		inputs[fieldJobURLUC3] = newInput("Jira Test Execution e.g. BRSF-16163", false)
 	}
 
 	return inputs

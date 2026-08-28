@@ -152,12 +152,57 @@ func (c *Client) GetIssueRaw(key string) ([]byte, error) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("jira authentication failed — check credentials")
+		return nil, authError(resp)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("jira denied access to %s (403) — your account may lack browse permission on this project", key)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("jira issue %s not found (404) — check the key, or you may lack permission to view it", key)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("jira issue %s returned %d: %s", key, resp.StatusCode, truncate(string(body), 300))
 	}
 	return body, nil
+}
+
+// authError turns a 401 response into a helpful message, surfacing Jira's CAPTCHA
+// lockout (triggered by prior failed logins) which no password change alone clears.
+func authError(resp *http.Response) error {
+	if reason := resp.Header.Get("X-Authentication-Denied-Reason"); reason != "" {
+		if strings.Contains(strings.ToUpper(reason), "CAPTCHA") {
+			return fmt.Errorf("jira login is locked by a CAPTCHA challenge (from earlier failed logins) — " +
+				"open https://jira.bri.co.id in a browser, log in and solve the CAPTCHA, then retry")
+		}
+		return fmt.Errorf("jira authentication denied: %s", reason)
+	}
+	return fmt.Errorf("jira authentication failed — check username and password")
+}
+
+// SetTestRunStatus sets an Xray test run's status (e.g. "PASS") by its test run id,
+// as taken from a Test Execution's "Tests association" field ({testKey, testRunId}).
+// Uses the Xray Server/DC REST API.
+func (c *Client) SetTestRunStatus(testRunID int, status string) error {
+	endpoint := fmt.Sprintf("%s/rest/raven/1.0/api/testrun/%d/status?status=%s",
+		c.baseURL, testRunID, url.QueryEscape(status))
+	req, err := http.NewRequest(http.MethodPut, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("set test run %d status: %w", testRunID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("set test run %d status returned %d: %s", testRunID, resp.StatusCode, truncate(string(b), 200))
+	}
+	return nil
 }
 
 // GetIssue fetches a single issue (all fields) as a parsed Issue.
@@ -239,23 +284,29 @@ func (c *Client) TransitionIssue(issueKey, transitionID string) error {
 
 // FindDoneTransitionID returns the transition ID that moves an issue to a "done" state.
 // It checks transition name and destination status name against common done-state names.
+// FindDoneTransitionID picks the transition that marks an issue "done". The target
+// state is matched in priority order so a "SELESAI"/"Done" resolution wins over a
+// "Closed" one (some BRISurf workflows offer both: Resolve→SELESAI and Close→CLOSED).
 func FindDoneTransitionID(transitions []Transition) string {
-	doneWords := []string{"done", "closed", "close", "resolved", "resolve", "finished", "complete", "completed"}
-	for _, t := range transitions {
-		name := strings.ToLower(t.Name)
-		dest := strings.ToLower(t.To.Name)
-		for _, w := range doneWords {
-			if name == w || dest == w {
+	// Preferred destination states, most-preferred first. CLOSED wins for BRISurf
+	// workflows that offer both Close→CLOSED and Resolve→SELESAI; the rest are
+	// fallbacks for workflows without a Closed state.
+	destPriority := []string{"closed", "selesai", "done", "resolved", "complete", "completed", "finished"}
+	for _, want := range destPriority {
+		for _, t := range transitions {
+			if strings.EqualFold(strings.TrimSpace(t.To.Name), want) {
 				return t.ID
 			}
 		}
 	}
-	// Looser partial match fallback
-	for _, t := range transitions {
-		name := strings.ToLower(t.Name)
-		dest := strings.ToLower(t.To.Name)
-		for _, w := range doneWords {
-			if strings.Contains(name, w) || strings.Contains(dest, w) {
+
+	// Fallback: match on a done-ish verb in the transition name or destination,
+	// preferring close over the others.
+	verbPriority := []string{"close", "selesai", "resolve", "done", "complete", "finish"}
+	for _, want := range verbPriority {
+		for _, t := range transitions {
+			if strings.Contains(strings.ToLower(t.Name), want) ||
+				strings.Contains(strings.ToLower(t.To.Name), want) {
 				return t.ID
 			}
 		}
