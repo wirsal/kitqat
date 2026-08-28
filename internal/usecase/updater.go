@@ -3,7 +3,6 @@ package usecase
 import (
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/wirsal/kitqa/internal/adapter/cbagnito"
 	"github.com/wirsal/kitqa/internal/adapter/confluence"
@@ -32,7 +31,7 @@ type UpdateResult struct {
 // Execute fetches the CBAgnito job tickets, resolves the Confluence page, injects
 // Jira links, and writes the updated content back to Confluence.
 func (uc *UpdateScenarioUseCase) Execute(pageURLOrID, jobURL string) (*UpdateResult, error) {
-	// 1. Fetch TC → Jira key mapping from CBAgnito.
+	// 1. Fetch tickets (Jira key + scenario Summary) from CBAgnito.
 	entries, err := uc.cbagnitoClient.GetJobTickets(jobURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch CBAgnito job tickets: %w", err)
@@ -41,8 +40,12 @@ func (uc *UpdateScenarioUseCase) Execute(pageURLOrID, jobURL string) (*UpdateRes
 		return nil, fmt.Errorf("CBAgnito job returned no ticket entries")
 	}
 
-	// Build mapping: TC number suffix ("01") → Jira key ("SPBRISURF-9736").
-	tcNumToKey := buildTCMapping(entries)
+	// Tickets are matched to page TC tables by their Summary text, so a job whose
+	// tickets belong to a different page injects nothing.
+	tickets := make([]confluence.ScenarioTicket, 0, len(entries))
+	for _, e := range entries {
+		tickets = append(tickets, confluence.ScenarioTicket{Summary: e.Summary, Key: e.TicketIssue})
+	}
 
 	// 2. Resolve and fetch Confluence page.
 	pageID, err := uc.confluenceUpdater.ResolvePageID(pageURLOrID)
@@ -58,11 +61,8 @@ func (uc *UpdateScenarioUseCase) Execute(pageURLOrID, jobURL string) (*UpdateRes
 	// 3. Extract Jira server metadata from the page (for macro rendering).
 	serverName, serverID := confluence.ExtractJiraServerInfo(body)
 
-	// 4. Inject Jira links.
-	newBody, updated, skipped := confluence.InjectJiraLinks(body, tcNumToKey, serverName, serverID)
-
-	// Collect TC numbers that had no mapping.
-	unmatched := findUnmatchedTCs(body, tcNumToKey)
+	// 4. Inject Jira links, matching each ticket to a TC table by scenario text.
+	newBody, updated, skipped, unmatched := confluence.InjectJiraLinksByScenario(body, tickets, serverName, serverID)
 
 	result := &UpdateResult{
 		PageTitle:    title,
@@ -84,41 +84,11 @@ func (uc *UpdateScenarioUseCase) Execute(pageURLOrID, jobURL string) (*UpdateRes
 	return result, nil
 }
 
-// buildTCMapping converts CBAgnito entries to a map[tcNumSuffix]jiraKey.
-// e.g. TicketEntry{TCID:"BRSF02_38_01", TicketIssue:"SPBRISURF-9736"} → map["01"]="SPBRISURF-9736"
-func buildTCMapping(entries []cbagnito.TicketEntry) map[string]string {
-	m := make(map[string]string, len(entries))
-	reSuffix := regexp.MustCompile(`_(\d+)$`)
-	for _, e := range entries {
-		// Also store by full TC ID for exact match.
-		m[e.TCID] = e.TicketIssue
-		// Store by numeric suffix (zero-padded).
-		if sub := reSuffix.FindStringSubmatch(e.TCID); len(sub) > 1 {
-			m[fmt.Sprintf("%02d", atoi(sub[1]))] = e.TicketIssue
-		}
-	}
-	return m
-}
-
-// findUnmatchedTCs returns TC numbers present on the page but absent from tcNumToKey.
+// reTCNum matches a "TCnn" token; shared with fill_scenario.go.
 var reTCNum = regexp.MustCompile(`(?i)TC(\d+)`)
 
-func findUnmatchedTCs(body string, tcNumToKey map[string]string) []string {
-	var unmatched []string
-	seen := make(map[string]bool)
-	for _, m := range reTCNum.FindAllStringSubmatch(body, -1) {
-		num := fmt.Sprintf("%02d", atoi(m[1]))
-		if seen[num] {
-			continue
-		}
-		seen[num] = true
-		if _, ok := tcNumToKey[num]; !ok {
-			unmatched = append(unmatched, "TC"+strings.TrimLeft(num, "0"))
-		}
-	}
-	return unmatched
-}
-
+// atoi parses a leading run of digits, stopping at the first non-digit. Shared
+// across the usecase package (also used by fill_scenario.go).
 func atoi(s string) int {
 	n := 0
 	for _, c := range s {

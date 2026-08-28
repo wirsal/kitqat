@@ -37,6 +37,10 @@ var trailingHeaders = []string{
 	"Labels",         // U = 21
 }
 
+// testExecutionCol is the 1-based column index of "Test Execution" (T = 20):
+// the second trailing header, i.e. manualStepsEnd + 1 (Test Plan) + 1.
+const testExecutionCol = manualStepsEnd + 2
+
 type Exporter struct{}
 
 func NewExporter() *Exporter { return &Exporter{} }
@@ -169,11 +173,17 @@ func (e *Exporter) build(testCases []domain.TestCase) (*excelize.File, error) {
 			f.SetCellValue(sheet, cell, val)
 			f.SetCellStyle(sheet, cell, cell, dataStyle)
 		}
-		// Apply data style to Manual Test Steps + trailing columns (leave blank)
+		// Apply data style to Manual Test Steps + trailing columns (left blank,
+		// except Test Execution below).
 		lastCol := manualStepsEnd + len(trailingHeaders)
 		for col := len(mainHeaders) + 1; col <= lastCol; col++ {
 			cell, _ := excelize.CoordinatesToCellName(col, row)
 			f.SetCellStyle(sheet, cell, cell, dataStyle)
+		}
+		// Fill the optional Test Execution column (T) when provided.
+		if tc.TestExecution != "" {
+			cell, _ := excelize.CoordinatesToCellName(testExecutionCol, row)
+			f.SetCellValue(sheet, cell, tc.TestExecution)
 		}
 	}
 

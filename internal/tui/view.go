@@ -101,6 +101,7 @@ var formLabelsDownload = [fieldCountUC1]string{
 	"Repo Path :",
 	"Project   :",
 	"Output    :",
+	"Test Exec :",
 }
 
 var formLabelsUpdate = [fieldCountUC2]string{

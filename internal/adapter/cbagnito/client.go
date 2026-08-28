@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +16,21 @@ import (
 )
 
 const baseURL = "http://172.18.249.109:1014"
+
+// dumpToHome writes diagnostic content to <home>/<name> and returns the path.
+// Used to capture the fetched CBAgnito job HTML when parsing finds no tickets,
+// regardless of which directory the binary was launched from.
+func dumpToHome(name, content string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = "."
+	}
+	path := home + string(os.PathSeparator) + name
+	if os.WriteFile(path, []byte(content), 0644) != nil {
+		return ""
+	}
+	return path
+}
 
 // Client calls the CBAgnito portal API.
 // Authentication uses Flask session cookies obtained via CSRF-aware form login.
@@ -120,7 +136,8 @@ func (c *Client) GetJobTickets(jobURL string) ([]TicketEntry, error) {
 // TicketEntry represents one ticket row from a CBAgnito job result.
 type TicketEntry struct {
 	TicketIssue string // e.g. "SPBRISURF-9736"
-	TCID        string // e.g. "BRSF02_38_01"
+	TCID        string // e.g. "BRSF02_38_01" (may be empty for some jobs)
+	Summary     string // scenario summary, used to match the ticket to a page TC table
 }
 
 func (c *Client) fetchJobTickets(jobURL string) ([]TicketEntry, error) {
@@ -208,6 +225,12 @@ func (c *Client) parseHTMLPage(pageURL string) ([]TicketEntry, error) {
 	body, _ := io.ReadAll(resp.Body)
 	entries := parseHTMLTable(string(body))
 	if len(entries) == 0 {
+		dump := fmt.Sprintf("<!-- GET %s -> HTTP %d, %d bytes -->\n%s",
+			pageURL, resp.StatusCode, len(body), string(body))
+		if path := dumpToHome("kitqa_cbagnito_page.html", dump); path != "" {
+			return nil, fmt.Errorf("no ticket entries found at CBAgnito job URL: %s\n"+
+				"(page HTML dumped to %s — send it for diagnosis)", pageURL, path)
+		}
 		return nil, fmt.Errorf("no ticket entries found at CBAgnito job URL: %s", pageURL)
 	}
 	return entries, nil
@@ -258,10 +281,18 @@ func extractEntryFromRow(tr *html.Node) *TicketEntry {
 			tcID = reTCID.FindString(v)
 		}
 	}
-	if ticketIssue == "" || tcID == "" {
+	// A row is a ticket as soon as it carries a Jira key. The TC ID may be blank
+	// (some CBAgnito jobs don't populate it) — tickets are matched to page TC
+	// tables by their Summary text instead.
+	if ticketIssue == "" {
 		return nil
 	}
-	return &TicketEntry{TicketIssue: ticketIssue, TCID: tcID}
+	// Column order on the CBAgnito job table is: Ticket Issue, TC Id, Summary, …
+	var summary string
+	if len(cells) > 2 {
+		summary = cells[2]
+	}
+	return &TicketEntry{TicketIssue: ticketIssue, TCID: tcID, Summary: summary}
 }
 
 // nodeText recursively collects all text nodes under n.

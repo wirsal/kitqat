@@ -70,15 +70,16 @@ const (
 	fieldRepoPath   = 3
 	fieldProject    = 4 // UC1 only: project key (e.g. SPBRISURF)
 	fieldOutput     = 5 // UC1: output file path
+	fieldTestExec   = 6 // UC1 only: optional Test Execution key (slot 6)
 	fieldJobURL     = 3 // UC2: CBAgnito job URL (slot 3, after Page URL)
 	fieldJobURLUC3  = 2 // UC3: CBAgnito job URL (slot 2, no Page URL needed)
 	fieldSourceFile = 3 // UC4: spreadsheet path (slot 3, after Page URL)
 
-	fieldCountUC1 = 6 // UC1 has 6 input fields
+	fieldCountUC1 = 7 // UC1 has 7 input fields (last one, Test Execution, is optional)
 	fieldCountUC2 = 4 // UC2 has 4 input fields
 	fieldCountUC3 = 3 // UC3 has 3 input fields (username, password, job URL)
 	fieldCountUC4 = 4 // UC4 has 4 input fields (username, password, page URL, sheet file)
-	fieldCount    = 6 // max — always allocate this many inputs
+	fieldCount    = 7 // max — always allocate this many inputs
 )
 
 type Model struct {
@@ -122,7 +123,8 @@ func New() Model {
 				"  • Confluence page URL\n" +
 				"  • Repo Path (default folder)\n" +
 				"  • Project key (default: SPBRISURF)\n" +
-				"  • Output file destination (.xlsx)",
+				"  • Output file destination (.xlsx)\n" +
+				"  • Test Execution key (optional)",
 		},
 		{
 			title: "2. Update Scenario Detail",
@@ -376,9 +378,10 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 		if output == "" {
 			output = "test_cases.xlsx"
 		}
+		testExec := strings.TrimSpace(m.inputs[fieldTestExec].Value())
 		return m, tea.Batch(
 			m.spinner.Tick,
-			func() tea.Msg { return doDownload(username, password, pageURL, repoPath, project, output) },
+			func() tea.Msg { return doDownload(username, password, pageURL, repoPath, project, output, testExec) },
 		)
 	}
 
@@ -421,13 +424,14 @@ func (m Model) updateResult(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // ── Download logic ────────────────────────────────────────────────────────────
 
-func doDownload(username, password, pageURL, repoPath, project, output string) tea.Msg {
+func doDownload(username, password, pageURL, repoPath, project, output, testExec string) tea.Msg {
 	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
 	repo := confluence.NewRepository(confluenceClient)
 	jiraClient := jira.NewClient("https://jira.bri.co.id", username, password)
 	repo.WithJiraClient(jiraClient)
 	repo.SetDefaultRepoPath(repoPath)
 	repo.SetDefaultProject(project)
+	repo.SetDefaultTestExecution(testExec)
 
 	exp := excel.NewExporter()
 
@@ -497,6 +501,7 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 		inputs[fieldRepoPath] = newInput("/Monitoring Subrogasi Unprocess", false)
 		inputs[fieldProject] = newInputWithValue("SPBRISURF", false)
 		inputs[fieldOutput] = newInputWithValue("test_cases.xlsx", false)
+		inputs[fieldTestExec] = newInput("optional, e.g. SPBRISURF-1234", false)
 	} else if uc == ucUpdateScenario {
 		// UC2: slot 3 = Job URL
 		inputs[fieldJobURL] = newInput("http://172.18.249.109:1014/cr-job/...", false)

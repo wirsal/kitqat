@@ -370,13 +370,6 @@ func ExtractJiraServerInfo(storageHTML string) (serverName, serverID string) {
 	return "System JIRA", ""
 }
 
-// reTableRow matches a single table row. Rows are not nested, so a non-greedy
-// match to the first </tr> is safe for the flat vertical TC tables we target.
-var reTableRow = regexp.MustCompile(`(?is)<tr\b[^>]*>.*?</tr>`)
-
-// reTableCell matches a <td>/<th> cell and captures its inner content.
-var reTableCell = regexp.MustCompile(`(?is)<t[dh]\b[^>]*>(.*?)</t[dh]>`)
-
 // reTagStrip removes HTML/storage tags, leaving text content.
 var reTagStrip = regexp.MustCompile(`(?is)<[^>]+>`)
 
@@ -397,62 +390,187 @@ func normalizeCellLabel(inner string) string {
 	return strings.ToLower(s)
 }
 
-// InjectJiraLinks scans the Confluence storage HTML for vertical "No. Test Case" rows
-// and appends (or replaces) a Jira structured-macro link in the value cell.
+// ScenarioTicket pairs a CBAgnito ticket's Jira key with its scenario summary.
+// The summary — not a positional index — is what matches the ticket to a page's
+// TC table, so a job whose tickets don't belong to the page injects nothing.
+type ScenarioTicket struct {
+	Summary string
+	Key     string
+}
+
+// scenarioMatchMinLen is the shortest normalized summary considered a real match,
+// guarding against a short/generic string pairing with the wrong table.
+const scenarioMatchMinLen = 10
+
+// reTCPrefix matches a leading "TC01 -" style prefix, stripped before comparing
+// a scenario cell to a ticket summary.
+var reTCPrefix = regexp.MustCompile(`(?i)^\s*tc\s*\d+\s*[-–—:.\s]*`)
+
+// reNonAlnum collapses runs of non-alphanumeric characters to a single space.
+var reNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
+
+// normalizeMatchText lowercases, strips tags/entities and any leading "TCnn -"
+// prefix, then reduces the rest to space-separated alphanumeric tokens so a page
+// Scenario cell and a CBAgnito Summary can be compared robustly.
+func normalizeMatchText(s string) string {
+	s = html.UnescapeString(reTagStrip.ReplaceAllString(s, " "))
+	s = strings.ToLower(s)
+	s = reTCPrefix.ReplaceAllString(s, " ")
+	s = reNonAlnum.ReplaceAllString(s, " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// scenarioTextMatches reports whether a normalized ticket summary corresponds to a
+// table's normalized scenario text (either contains the other, both long enough).
+func scenarioTextMatches(tableText, ticketNorm string) bool {
+	if len(ticketNorm) < scenarioMatchMinLen || len(tableText) < scenarioMatchMinLen {
+		return false
+	}
+	return strings.Contains(tableText, ticketNorm) || strings.Contains(ticketNorm, tableText)
+}
+
+// InjectJiraLinksByScenario injects a Jira structured-macro link into the
+// "No. Test Case" cell of each vertical TC table, choosing the ticket whose Summary
+// matches that table's Scenario/Function text. Tables with no matching ticket are
+// left untouched — this is the safety that stops a mismatched job from writing.
 //
-// tcNumToKey maps the two-digit TC number string (e.g. "01") to a Jira issue key
-// (e.g. "SPBRISURF-9736"). Returns the updated HTML and injection counts.
-//
-// Matching is done on tag-stripped, entity-decoded text (not raw regex against the
-// markup) so that Confluence's nested <p>/<strong> wrappers and &nbsp; separators
-// don't defeat the label match.
-func InjectJiraLinks(storageHTML string, tcNumToKey map[string]string, serverName, serverID string) (newHTML string, updated, skipped int) {
+// Each ticket is used at most once. When the "No. Test Case" cell is blank, it is
+// seeded with the table's own TC label (e.g. "TC01 - ") before the link. Idempotent:
+// a cell already linked to the same key is skipped.
+func InjectJiraLinksByScenario(storageHTML string, tickets []ScenarioTicket, serverName, serverID string) (newHTML string, updated, skipped int, unmatched []string) {
 	if serverName == "" {
 		serverName = "System JIRA"
 	}
 
-	result := reTableRow.ReplaceAllStringFunc(storageHTML, func(row string) string {
-		cells := reTableCell.FindAllStringSubmatchIndex(row, -1)
-		if len(cells) < 2 {
-			return row
+	type normTicket struct {
+		norm string
+		key  string
+		used bool
+	}
+	norm := make([]*normTicket, 0, len(tickets))
+	for _, t := range tickets {
+		n := normalizeMatchText(t.Summary)
+		if t.Key == "" || len(n) < scenarioMatchMinLen {
+			continue
 		}
+		norm = append(norm, &normTicket{norm: n, key: t.Key})
+	}
 
-		// First cell must be a "No. Test Case" label.
-		labelInner := row[cells[0][2]:cells[0][3]]
-		if !verticalTCLabels[normalizeCellLabel(labelInner)] {
-			return row
+	var sb strings.Builder
+	last := 0
+	for _, tbl := range topLevelElements(storageHTML, "table") {
+		table := storageHTML[tbl.start:tbl.end]
+
+		if !tableHasTCRow(table) {
+			continue // not a vertical TC table
 		}
-
-		// Second cell holds the TC number (and any existing link).
-		valStart, valEnd := cells[1][2], cells[1][3]
-		inner := row[valStart:valEnd]
-
-		tcNum := extractTCNumber(reTagStrip.ReplaceAllString(inner, ""))
+		// TC label number for seeding a blank cell — from the No. Test Case cell,
+		// else the Scenario cell ("TC01 - ..."). May be "" if neither carries one.
+		tcNum := tableTCNumber(table)
 		if tcNum == "" {
-			return row
+			tcNum = extractTCNumber(reTagStrip.ReplaceAllString(tableFieldText(table, "scenario"), " "))
 		}
-		jiraKey, ok := tcNumToKey[tcNum]
-		if !ok || jiraKey == "" {
-			return row // no mapping for this TC
+
+		matchText := normalizeMatchText(
+			tableFieldText(table, "scenario") + " " + tableFieldText(table, "function"))
+
+		// Pick the unused ticket with the longest matching summary.
+		var best *normTicket
+		for _, t := range norm {
+			if t.used {
+				continue
+			}
+			if scenarioTextMatches(matchText, t.norm) && (best == nil || len(t.norm) > len(best.norm)) {
+				best = t
+			}
 		}
+		if best == nil {
+			unmatched = append(unmatched, "TC"+strings.TrimLeft(tcNum, "0"))
+			continue
+		}
+		best.used = true
+
+		newTable, u, s := injectKeyIntoTCTable(table, tcNum, best.key, serverName, serverID)
+		updated += u
+		skipped += s
+		if newTable == table {
+			continue
+		}
+		sb.WriteString(storageHTML[last:tbl.start])
+		sb.WriteString(newTable)
+		last = tbl.end
+	}
+	sb.WriteString(storageHTML[last:])
+	return sb.String(), updated, skipped, unmatched
+}
+
+// tableHasTCRow reports whether the table contains a "No. Test Case" label row,
+// identifying it as a vertical TC table regardless of whether that cell holds a number.
+func tableHasTCRow(table string) bool {
+	for _, r := range topLevelElements(table, "tr") {
+		row := table[r.start:r.end]
+		cells := rowCells(row)
+		if len(cells) >= 2 && verticalTCLabels[normalizeCellLabel(row[cells[0].innerStart:cells[0].innerEnd])] {
+			return true
+		}
+	}
+	return false
+}
+
+// tableFieldText returns the tag-stripped value-cell inner HTML of the first row in
+// the table whose label maps to the given canonical field (see scenarioFieldLabels).
+func tableFieldText(table, field string) string {
+	for _, r := range topLevelElements(table, "tr") {
+		row := table[r.start:r.end]
+		cells := rowCells(row)
+		if len(cells) < 2 {
+			continue
+		}
+		if scenarioFieldLabels[normalizeCellLabel(row[cells[0].innerStart:cells[0].innerEnd])] == field {
+			return row[cells[1].innerStart:cells[1].innerEnd]
+		}
+	}
+	return ""
+}
+
+// injectKeyIntoTCTable injects (or replaces) the Jira link in a single TC table's
+// "No. Test Case" value cell. Returns the table unchanged with skipped=1 when the
+// cell is already linked to the same key.
+func injectKeyIntoTCTable(table, tcNum, jiraKey, serverName, serverID string) (newTable string, updated, skipped int) {
+	for _, r := range topLevelElements(table, "tr") {
+		row := table[r.start:r.end]
+		cells := rowCells(row)
+		if len(cells) < 2 {
+			continue
+		}
+		if !verticalTCLabels[normalizeCellLabel(row[cells[0].innerStart:cells[0].innerEnd])] {
+			continue
+		}
+
+		vs, ve := cells[1].innerStart, cells[1].innerEnd
+		inner := row[vs:ve]
 
 		// Idempotency: an existing Jira macro in the cell.
-		if existingKeys := reExistingJiraKey.FindStringSubmatch(inner); len(existingKeys) > 1 {
-			if strings.TrimSpace(existingKeys[1]) == jiraKey {
-				skipped++
-				return row // already linked to the same key
+		if ek := reExistingJiraKey.FindStringSubmatch(inner); len(ek) > 1 {
+			if strings.TrimSpace(ek[1]) == jiraKey {
+				return table, 0, 1 // already linked to the same key
 			}
-			// Different key — drop the old macro before appending the new one.
 			inner = reFullJiraMacro.ReplaceAllString(inner, "")
 		}
 
-		macro := buildJiraMacro(jiraKey, serverName, serverID)
-		newInner := strings.TrimRight(inner, " \t\n\r") + macro
-		updated++
-		return row[:valStart] + newInner + row[valEnd:]
-	})
-
-	return result, updated, skipped
+		// Seed the TC label when the cell is otherwise empty (just a <br/>/placeholder).
+		base := strings.TrimRight(inner, " \t\n\r")
+		if !strings.Contains(inner, "<ac:") && strings.TrimSpace(reTagStrip.ReplaceAllString(inner, "")) == "" {
+			if tcNum != "" {
+				base = "<p>TC" + tcNum + " - </p>"
+			} else {
+				base = ""
+			}
+		}
+		newRow := row[:vs] + base + buildJiraMacro(jiraKey, serverName, serverID) + row[ve:]
+		return table[:r.start] + newRow + table[r.end:], 1, 0
+	}
+	return table, 0, 0
 }
 
 func buildJiraMacro(key, serverName, serverID string) string {

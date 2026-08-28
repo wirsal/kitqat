@@ -15,6 +15,7 @@ type Repository struct {
 	jiraClient      *jira.Client // optional; used when Jira macros are found
 	defaultRepoPath string       // fallback if Jira custom field not found
 	defaultProject  string       // fallback project key for vertical table pages
+	testExecution   string       // optional Test Execution key applied to every test case
 }
 
 func NewRepository(client *Client) *Repository {
@@ -36,6 +37,13 @@ func (r *Repository) SetDefaultRepoPath(path string) {
 // Defaults to "SPBRISURF" if not set.
 func (r *Repository) SetDefaultProject(project string) {
 	r.defaultProject = project
+}
+
+// SetDefaultTestExecution sets an optional Test Execution key applied to every
+// fetched test case (written to the Test Execution column of the export). Empty
+// means the column is left blank, as before.
+func (r *Repository) SetDefaultTestExecution(key string) {
+	r.testExecution = key
 }
 
 func (r *Repository) ResolvePageID(urlOrID string) (string, error) {
@@ -64,23 +72,39 @@ func (r *Repository) FetchTestCases(pageID string) ([]domain.TestCase, error) {
 
 	// Try 1: vertical two-column tables (Scenario Detail / Screen Capture pages).
 	if rawCases := ParseVerticalTestCases(page.Body.Storage.Value, page.Title); len(rawCases) > 0 {
-		return r.verticalToTestCases(rawCases), nil
+		return r.withTestExecution(r.verticalToTestCases(rawCases)), nil
 	}
 
 	// Try 2: horizontal table with header row.
 	if rawCases := ParseTestCasesFromHTML(page.Body.Storage.Value); len(rawCases) > 0 {
-		return rawToTestCases(rawCases), nil
+		return r.withTestExecution(rawToTestCases(rawCases)), nil
 	}
 
 	// Try 3: Jira macros → fetch from Jira API.
 	if r.jiraClient != nil {
 		macros := ParseJiraMacros(page.Body.Storage.Value)
 		if len(macros) > 0 {
-			return r.fetchFromJira(macros)
+			cases, err := r.fetchFromJira(macros)
+			if err != nil {
+				return nil, err
+			}
+			return r.withTestExecution(cases), nil
 		}
 	}
 
 	return nil, fmt.Errorf("no test cases found in page %q (title: %s)", pageID, page.Title)
+}
+
+// withTestExecution stamps the optional Test Execution key onto every test case.
+// No-op when unset, so the export column stays blank exactly as before.
+func (r *Repository) withTestExecution(cases []domain.TestCase) []domain.TestCase {
+	if r.testExecution == "" {
+		return cases
+	}
+	for i := range cases {
+		cases[i].TestExecution = r.testExecution
+	}
+	return cases
 }
 
 // fetchFromJira resolves test cases from Jira macros using the Jira API.

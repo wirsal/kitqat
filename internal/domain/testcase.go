@@ -10,6 +10,7 @@ type TestCase struct {
 	Assignee           string
 	TestRepositoryPath string
 	ExpectedResult     string
+	TestExecution      string // optional Jira Test Execution key, written to the Test Execution column
 }
 
 // ScenarioRow is one scenario definition read from a spreadsheet (local file today,
