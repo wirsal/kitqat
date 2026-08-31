@@ -1,6 +1,7 @@
 package confluence
 
 import (
+	"regexp"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -30,10 +31,37 @@ func BuildTestExecutionMacro(serverName, serverID, jql string) string {
 	return sb.String()
 }
 
-// InsertTestExecutionTable inserts a Test Execution filter macro just before the
-// first vertical TC table (i.e. under the "Test Execution :" heading). Idempotent:
-// if a Jira macro already carries the same jqlQuery, the page is returned unchanged.
-// Returns the new HTML and whether it changed.
+// headingTags are the storage-format elements that can carry the page's
+// "Test Execution :" section heading — usually a bold paragraph, occasionally
+// an actual heading element.
+var headingTags = []string{"p", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+// testExecHeadingText matches the "Test Execution" heading text after
+// normalizeCellLabel has stripped tags and collapsed whitespace, tolerating an
+// optional trailing colon so "Test Execution :", "Test Execution:" and
+// "TEST EXECUTION" all match.
+var testExecHeadingText = regexp.MustCompile(`^test execution\s*:?$`)
+
+// testExecHeading returns the page's "Test Execution :" heading/paragraph
+// element, or nil if the page has none.
+func testExecHeading(storageHTML string) *element {
+	for _, e := range topLevelElements(storageHTML, headingTags...) {
+		text := normalizeCellLabel(storageHTML[e.innerStart:e.innerEnd])
+		if testExecHeadingText.MatchString(text) {
+			el := e
+			return &el
+		}
+	}
+	return nil
+}
+
+// InsertTestExecutionTable inserts a Test Execution filter macro right after the
+// page's "Test Execution :" heading — the reference page layout has a screenshot
+// placeholder and the TC table below that heading, and the macro belongs directly
+// under the heading text, ahead of both. Pages without that heading (older layout)
+// fall back to just before the first vertical TC table, then to appending at the
+// end of the page. Idempotent: if a Jira macro already carries the same jqlQuery,
+// the page is returned unchanged. Returns the new HTML and whether it changed.
 func InsertTestExecutionTable(storageHTML, serverName, serverID, jql string) (string, bool) {
 	// Already present? Match on the escaped jqlQuery value inside a jira macro.
 	if strings.Contains(storageHTML, "<ac:parameter ac:name=\"jqlQuery\">"+html.EscapeString(jql)+"</ac:parameter>") {
@@ -42,13 +70,17 @@ func InsertTestExecutionTable(storageHTML, serverName, serverID, jql string) (st
 
 	macro := BuildTestExecutionMacro(serverName, serverID, jql)
 
-	// Insert before the first TC table so it sits under the "Test Execution :" heading.
+	if h := testExecHeading(storageHTML); h != nil {
+		return storageHTML[:h.end] + macro + storageHTML[h.end:], true
+	}
+
+	// No heading found — fall back to just before the first TC table.
 	for _, t := range topLevelElements(storageHTML, "table") {
 		if tableHasTCRow(storageHTML[t.start:t.end]) {
 			return storageHTML[:t.start] + macro + storageHTML[t.start:], true
 		}
 	}
 
-	// No TC table on the page — append at the end.
+	// No TC table on the page either — append at the end.
 	return storageHTML + macro, true
 }
