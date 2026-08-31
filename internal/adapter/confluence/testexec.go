@@ -55,12 +55,18 @@ func testExecHeading(storageHTML string) *element {
 	return nil
 }
 
+// testExecHeadingHTML is the "Test Execution :" section heading created when a
+// page has none yet, matching the bold-paragraph style of the reference page.
+const testExecHeadingHTML = `<p><strong>Test Execution :</strong></p>`
+
 // InsertTestExecutionTable inserts a Test Execution filter macro right after the
 // page's "Test Execution :" heading — the reference page layout has a screenshot
 // placeholder and the TC table below that heading, and the macro belongs directly
-// under the heading text, ahead of both. Pages without that heading (older layout)
-// fall back to just before the first vertical TC table, then to appending at the
-// end of the page. Idempotent: if a Jira macro already carries the same jqlQuery,
+// under the heading text, ahead of both. When the page has no such heading yet,
+// one is created (testExecHeadingHTML) directly above the macro, placed just
+// before the first vertical TC table so the new section still leads straight
+// into the test cases, or appended at the end of the page when it has no TC
+// table either. Idempotent: if a Jira macro already carries the same jqlQuery,
 // the page is returned unchanged. Returns the new HTML and whether it changed.
 func InsertTestExecutionTable(storageHTML, serverName, serverID, jql string) (string, bool) {
 	// Already present? Match on the escaped jqlQuery value inside a jira macro.
@@ -74,13 +80,16 @@ func InsertTestExecutionTable(storageHTML, serverName, serverID, jql string) (st
 		return storageHTML[:h.end] + macro + storageHTML[h.end:], true
 	}
 
-	// No heading found — fall back to just before the first TC table.
+	// No heading found — create one right above the macro. Place the new
+	// section just before the first TC table, so it still leads straight
+	// into the test cases below it.
+	block := testExecHeadingHTML + macro
 	for _, t := range topLevelElements(storageHTML, "table") {
 		if tableHasTCRow(storageHTML[t.start:t.end]) {
-			return storageHTML[:t.start] + macro + storageHTML[t.start:], true
+			return storageHTML[:t.start] + block + storageHTML[t.start:], true
 		}
 	}
 
-	// No TC table on the page either — append at the end.
-	return storageHTML + macro, true
+	// No TC table on the page either — append the whole new section at the end.
+	return storageHTML + block, true
 }

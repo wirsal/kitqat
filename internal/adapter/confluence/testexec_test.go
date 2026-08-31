@@ -1,6 +1,9 @@
 package confluence
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const testExecTCTable = `<table><tbody><tr><th>No. Test Case</th><td>-</td></tr></tbody></table>`
 
@@ -28,10 +31,9 @@ func TestInsertTestExecutionTable_UnderHeading(t *testing.T) {
 	}
 }
 
-// A page without a "Test Execution :" heading falls back to the old
-// before-the-first-TC-table behavior, so older/differently laid out pages
-// still get the macro somewhere sensible.
-func TestInsertTestExecutionTable_FallsBackToBeforeTCTable(t *testing.T) {
+// A page without a "Test Execution :" heading gets one created, directly
+// above the macro, positioned just before the first TC table.
+func TestInsertTestExecutionTable_CreatesHeadingWhenMissing(t *testing.T) {
 	body := `<p>Some unrelated intro text.</p>` + testExecTCTable
 
 	got, changed := InsertTestExecutionTable(body, "System JIRA", "", `issue in testExecutionTests("BRSF-16163")`)
@@ -39,13 +41,36 @@ func TestInsertTestExecutionTable_FallsBackToBeforeTCTable(t *testing.T) {
 		t.Fatal("changed = false, want true")
 	}
 
-	tableStart := len(`<p>Some unrelated intro text.</p>`)
-	if got[:tableStart] != body[:tableStart] {
-		t.Fatalf("text before the TC table was altered:\ngot:  %q\nwant: %q", got[:tableStart], body[:tableStart])
+	introEnd := len(`<p>Some unrelated intro text.</p>`)
+	if got[:introEnd] != body[:introEnd] {
+		t.Fatalf("text before the new section was altered:\ngot:  %q\nwant: %q", got[:introEnd], body[:introEnd])
 	}
-	afterIntro := got[tableStart:]
-	if want := `<ac:structured-macro ac:name="jira"`; len(afterIntro) < len(want) || afterIntro[:len(want)] != want {
-		t.Errorf("macro was not inserted immediately before the TC table; got: %q", afterIntro[:min(80, len(afterIntro))])
+
+	wantHeading := `<p>Some unrelated intro text.</p>` + testExecHeadingHTML
+	if len(got) < len(wantHeading) || got[:len(wantHeading)] != wantHeading {
+		t.Fatalf("heading was not created right before the macro:\ngot:  %q\nwant prefix: %q", got[:min(len(got), len(wantHeading)+40)], wantHeading)
+	}
+	afterHeading := got[len(wantHeading):]
+	if want := `<ac:structured-macro ac:name="jira"`; len(afterHeading) < len(want) || afterHeading[:len(want)] != want {
+		t.Errorf("macro was not inserted immediately after the new heading; got: %q", afterHeading[:min(80, len(afterHeading))])
+	}
+	if !strings.HasSuffix(got, testExecTCTable) {
+		t.Errorf("TC table should immediately follow the new section; got tail: %q", got[max(0, len(got)-80):])
+	}
+}
+
+// When the page has neither a heading nor a TC table, the whole new section
+// (heading + macro) is appended at the end.
+func TestInsertTestExecutionTable_CreatesHeadingAtEndWhenNoTCTable(t *testing.T) {
+	body := `<p>A page with no test cases yet.</p>`
+
+	got, changed := InsertTestExecutionTable(body, "System JIRA", "", `issue in testExecutionTests("BRSF-16163")`)
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	want := body + testExecHeadingHTML
+	if len(got) < len(want) || got[:len(want)] != want {
+		t.Fatalf("heading was not appended after the existing body:\ngot:  %q\nwant prefix: %q", got[:min(len(got), len(want)+40)], want)
 	}
 }
 
