@@ -3,7 +3,7 @@ package usecase
 import (
 	"fmt"
 
-	"github.com/wirsal/kitqa/internal/adapter/jira"
+	"github.com/wirsal/kitqat/internal/adapter/jira"
 )
 
 // SetDoneUseCase reads the tests of a Jira Test Execution and, for each one, sets

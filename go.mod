@@ -1,4 +1,4 @@
-module github.com/wirsal/kitqa
+module github.com/wirsal/kitqat
 
 go 1.24.2
 

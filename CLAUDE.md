@@ -1,8 +1,8 @@
-# KitQA — Claude Code Context
+# KitQAt — Claude Code Context
 
 ## Project Overview
 
-KitQA is a Go TUI/CLI tool for the QA team at BRISurf. It has four use cases:
+KitQAt is a Go TUI/CLI tool for the QA team at BRISurf. It has four use cases:
 
 1. **Download TC to Excel** — fetch test cases from a Confluence Scenario Detail page and export to `.xlsx` format ready for upload to CBAgnito.
 2. **Update Scenario Detail** — after uploading the Excel to CBAgnito (which creates Jira tickets), inject the resulting Jira ticket links into the "No. Test Case" cells of the original Confluence page.
@@ -12,7 +12,7 @@ KitQA is a Go TUI/CLI tool for the QA team at BRISurf. It has four use cases:
 ## Module
 
 ```
-github.com/wirsal/kitqa
+github.com/wirsal/kitqat
 ```
 
 ## Key External Services

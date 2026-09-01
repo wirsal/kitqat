@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/adapter/confluence"
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/adapter/confluence"
+	"github.com/wirsal/kitqat/internal/domain"
 )
 
 // FillScenarioUseCase writes Scenario, Function, Input Data, Steps and Expected Result

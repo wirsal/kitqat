@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/domain"
 	"github.com/xuri/excelize/v2"
 )
 

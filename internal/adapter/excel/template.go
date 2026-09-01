@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	scenariosheet "github.com/wirsal/kitqa/internal/adapter/sheet"
+	scenariosheet "github.com/wirsal/kitqat/internal/adapter/sheet"
 	"github.com/xuri/excelize/v2"
 )
 

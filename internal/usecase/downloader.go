@@ -3,7 +3,7 @@ package usecase
 import (
 	"fmt"
 
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/domain"
 )
 
 type DownloadUseCase struct {

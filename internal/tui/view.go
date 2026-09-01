@@ -5,11 +5,11 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/wirsal/kitqa/internal/version"
+	"github.com/wirsal/kitqat/internal/version"
 )
 
 const (
-	appTitle = "KitQA"
+	appTitle = "KitQAt"
 	divider  = "────────────────────────────────────────────────────"
 )
 

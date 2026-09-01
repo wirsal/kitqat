@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// NewServer builds the HTTP server exposing KitQA's three use cases
+// NewServer builds the HTTP server exposing KitQAt's three use cases
 // (download test cases, update scenario, set done) as JSON/file endpoints.
 func NewServer(addr string) *http.Server {
 	mux := http.NewServeMux()

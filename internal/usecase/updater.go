@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/adapter/confluence"
-	"github.com/wirsal/kitqa/internal/adapter/jira"
+	"github.com/wirsal/kitqat/internal/adapter/confluence"
+	"github.com/wirsal/kitqat/internal/adapter/jira"
 )
 
 // reJiraIssueKey matches a Jira issue key such as "BRSF-16163".
@@ -146,7 +146,7 @@ func dumpMatchDiagnostics(pageID, title, body string, tickets []confluence.Scena
 		return
 	}
 	sep := string(os.PathSeparator)
-	_ = os.WriteFile(home+sep+"kitqa_confluence_page.html",
+	_ = os.WriteFile(home+sep+"kitqat_confluence_page.html",
 		[]byte(fmt.Sprintf("<!-- page %s, title=%s -->\n%s", pageID, title, body)), 0644)
 
 	var sb strings.Builder
@@ -154,7 +154,7 @@ func dumpMatchDiagnostics(pageID, title, body string, tickets []confluence.Scena
 	for i, t := range tickets {
 		fmt.Fprintf(&sb, "%2d. key=%s\n    summary=%q\n", i+1, t.Key, t.Summary)
 	}
-	_ = os.WriteFile(home+sep+"kitqa_jira_tests.txt", []byte(sb.String()), 0644)
+	_ = os.WriteFile(home+sep+"kitqat_jira_tests.txt", []byte(sb.String()), 0644)
 }
 
 // reTCNum matches a "TCnn" token; shared with fill_scenario.go.

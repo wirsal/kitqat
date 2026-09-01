@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/wirsal/kitqa/internal/adapter/confluence"
-	"github.com/wirsal/kitqa/internal/adapter/excel"
-	"github.com/wirsal/kitqa/internal/adapter/jira"
-	"github.com/wirsal/kitqa/internal/usecase"
+	"github.com/wirsal/kitqat/internal/adapter/confluence"
+	"github.com/wirsal/kitqat/internal/adapter/excel"
+	"github.com/wirsal/kitqat/internal/adapter/jira"
+	"github.com/wirsal/kitqat/internal/usecase"
 )
 
 const (

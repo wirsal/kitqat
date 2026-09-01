@@ -227,7 +227,7 @@ func (c *Client) parseHTMLPage(pageURL string) ([]TicketEntry, error) {
 	if len(entries) == 0 {
 		dump := fmt.Sprintf("<!-- GET %s -> HTTP %d, %d bytes -->\n%s",
 			pageURL, resp.StatusCode, len(body), string(body))
-		if path := dumpToHome("kitqa_cbagnito_page.html", dump); path != "" {
+		if path := dumpToHome("kitqat_cbagnito_page.html", dump); path != "" {
 			return nil, fmt.Errorf("no ticket entries found at CBAgnito job URL: %s\n"+
 				"(page HTML dumped to %s — send it for diagnosis)", pageURL, path)
 		}

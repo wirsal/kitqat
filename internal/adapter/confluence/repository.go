@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/adapter/jira"
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/adapter/jira"
+	"github.com/wirsal/kitqat/internal/domain"
 )
 
 // Repository implements usecase.ConfluenceRepository.

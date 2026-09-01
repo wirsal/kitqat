@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/domain"
 )
 
 // fakeUpdater is an in-memory ConfluenceUpdater.

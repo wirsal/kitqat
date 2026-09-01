@@ -1,6 +1,6 @@
 package api
 
-import "github.com/wirsal/kitqa/internal/usecase"
+import "github.com/wirsal/kitqat/internal/usecase"
 
 // downloadRequest mirrors the UC1 form fields in internal/tui/model.go.
 type downloadRequest struct {

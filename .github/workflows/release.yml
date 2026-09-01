@@ -1,6 +1,6 @@
 name: Release
 
-# Build the KitQA binaries on GitHub and attach them to a Release.
+# Build the KitQAt binaries on GitHub and attach them to a Release.
 # The version is taken from the git tag (e.g. pushing tag "v1.2.4" injects
 # v1.2.4 into internal/version.Version via -ldflags) — no source edit needed.
 #
@@ -31,16 +31,16 @@ jobs:
         include:
           - goos: windows
             goarch: amd64
-            asset: KitQA_windows_x64.exe
+            asset: KitQAt_windows_x64.exe
           - goos: darwin
             goarch: arm64
-            asset: KitQA_mac_arm64
+            asset: KitQAt_mac_arm64
           - goos: darwin
             goarch: amd64
-            asset: KitQA_mac_x64
+            asset: KitQAt_mac_x64
           - goos: linux
             goarch: amd64
-            asset: KitQA_linux_x64
+            asset: KitQAt_linux_x64
 
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +67,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           go build \
-            -ldflags "-s -w -X github.com/wirsal/kitqa/internal/version.Version=${VERSION}" \
+            -ldflags "-s -w -X github.com/wirsal/kitqat/internal/version.Version=${VERSION}" \
             -o "dist/${{ matrix.asset }}" ./cmd/main.go
 
       - name: Upload workflow artifact

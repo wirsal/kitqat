@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/domain"
 )
 
 // scenarioAliases maps a normalized header cell to a canonical field name.

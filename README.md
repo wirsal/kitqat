@@ -1,11 +1,11 @@
-# KitQA
+# KitQAt
 
 Internal QA productivity tool for the **BRISurf** team. A single terminal app (TUI)
 that automates the repetitive Confluence / Jira / Xray steps around UAT test-case
 documentation — from generating scenarios to exporting test cases, wiring Jira links
 back into Confluence, and closing out a Test Execution.
 
-> ⚠️ **Internal use only.** KitQA talks to BRI's internal Confluence, Jira/Xray and
+> ⚠️ **Internal use only.** KitQAt talks to BRI's internal Confluence, Jira/Xray and
 > CBAgnito services and must be run from inside the BRI network (VPN). It is not a
 > general-purpose tool.
 
@@ -54,12 +54,12 @@ no installation required.
 
 | OS | Binary |
 |---|---|
-| Windows x64 | `KitQA_windows_x64.exe` |
-| macOS (Apple Silicon) | `KitQA_mac_arm64` |
-| macOS (Intel) | `KitQA_mac_x64` |
-| Linux x64 | `KitQA_linux_x64` |
+| Windows x64 | `KitQAt_windows_x64.exe` |
+| macOS (Apple Silicon) | `KitQAt_mac_arm64` |
+| macOS (Intel) | `KitQAt_mac_x64` |
+| Linux x64 | `KitQAt_linux_x64` |
 
-On macOS/Linux, mark it executable first: `chmod +x KitQA_mac_arm64`.
+On macOS/Linux, mark it executable first: `chmod +x KitQAt_mac_arm64`.
 
 ### Navigation
 | Key | Action |
@@ -103,10 +103,10 @@ Requires Go 1.24+.
 go run ./cmd/main.go
 
 # Cross-compile (static; version stamped via -ldflags)
-LD="-X github.com/wirsal/kitqa/internal/version.Version=v1.4.0"
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LD" -o bin/windows/KitQA_windows_x64.exe ./cmd/main.go
-CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "$LD" -o bin/mac/KitQA_mac_arm64        ./cmd/main.go
-CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "$LD" -o bin/linux/KitQA_linux_x64      ./cmd/main.go
+LD="-X github.com/wirsal/kitqat/internal/version.Version=v1.4.0"
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LD" -o bin/windows/KitQAt_windows_x64.exe ./cmd/main.go
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "$LD" -o bin/mac/KitQAt_mac_arm64        ./cmd/main.go
+CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "$LD" -o bin/linux/KitQAt_linux_x64      ./cmd/main.go
 ```
 
 ### Releases

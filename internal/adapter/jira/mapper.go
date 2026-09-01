@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/domain"
+	"github.com/wirsal/kitqat/internal/domain"
 )
 
 // knownRepoPathNames are candidate field name substrings for "Test Repository Path".

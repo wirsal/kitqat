@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/wirsal/kitqa/internal/api"
-	"github.com/wirsal/kitqa/internal/tui"
+	"github.com/wirsal/kitqat/internal/api"
+	"github.com/wirsal/kitqat/internal/tui"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func runServe(args []string) {
 
 	addr := fmt.Sprintf(":%d", *port)
 	srv := api.NewServer(addr)
-	log.Printf("KitQA API listening on %s", addr)
+	log.Printf("KitQAt API listening on %s", addr)
 	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wirsal/kitqa/internal/adapter/confluence"
+	"github.com/wirsal/kitqat/internal/adapter/confluence"
 )
 
 // AddTestExecUseCase inserts a Test Execution filter table (a Jira JQL table macro)

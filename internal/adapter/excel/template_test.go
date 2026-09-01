@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	scenariosheet "github.com/wirsal/kitqa/internal/adapter/sheet"
+	scenariosheet "github.com/wirsal/kitqat/internal/adapter/sheet"
 )
 
 // The template must round-trip through UC0's own reader: its header row has
