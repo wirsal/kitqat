@@ -91,6 +91,35 @@ func TestFillScenarioSecondRunWritesNothing(t *testing.T) {
 	}
 }
 
+func TestFillScenarioCreatesTestExecutionHeadingWhenMissing(t *testing.T) {
+	page := &fakeUpdater{title: "T", version: 1, body: pageWithTC01}
+	src := fakeSource{{TCNumber: "01", Scenario: "Skenario satu"}}
+
+	res, err := NewFillScenarioUseCase(page, src).Execute("x")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.TestExecutionHeadingAdded {
+		t.Error("TestExecutionHeadingAdded = false, want true")
+	}
+	if !strings.Contains(page.body, "Test Execution :") || !strings.Contains(page.body, "<ac:layout-section") {
+		t.Errorf("page missing the new Test Execution section:\n%s", page.body)
+	}
+
+	// A second run must not duplicate the heading.
+	page.version++
+	res2, err := NewFillScenarioUseCase(page, src).Execute("x")
+	if err != nil {
+		t.Fatalf("second Execute: %v", err)
+	}
+	if res2.TestExecutionHeadingAdded {
+		t.Error("second run reported TestExecutionHeadingAdded = true, want false")
+	}
+	if strings.Count(page.body, "Test Execution :") != 1 {
+		t.Error("Test Execution heading was duplicated")
+	}
+}
+
 func TestFillScenarioReportsUnmatchedPageTCs(t *testing.T) {
 	page := &fakeUpdater{title: "T", version: 1, body: pageWithTC01}
 	src := fakeSource{{TCNumber: "07", Scenario: "Hanya di sheet"}}

@@ -74,6 +74,40 @@ func TestInsertTestExecutionTable_CreatesHeadingAtEndWhenNoTCTable(t *testing.T)
 	}
 }
 
+// EnsureTestExecutionHeading (used by UC0, which has no Jira macro to attach)
+// creates the same bordered-section heading, placed just before the first TC
+// table, when the page has none yet.
+func TestEnsureTestExecutionHeading_CreatesWhenMissing(t *testing.T) {
+	body := `<p>Some unrelated intro text.</p>` + testExecTCTable
+
+	got, changed := EnsureTestExecutionHeading(body)
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+
+	want := `<p>Some unrelated intro text.</p>` + testExecHeadingHTML + testExecTCTable
+	if got != want {
+		t.Errorf("got:  %q\nwant: %q", got, want)
+	}
+	if !strings.Contains(got, "<ac:layout-section") {
+		t.Error("created heading is not wrapped in a layout section")
+	}
+}
+
+// A page that already has a "Test Execution :" heading (in any style) is left
+// untouched — EnsureTestExecutionHeading never duplicates it.
+func TestEnsureTestExecutionHeading_NoOpWhenPresent(t *testing.T) {
+	body := `<p><strong>Test Execution :</strong></p>` + testExecTCTable
+
+	got, changed := EnsureTestExecutionHeading(body)
+	if changed {
+		t.Error("changed = true, want false (heading already present)")
+	}
+	if got != body {
+		t.Error("body was modified despite heading already being present")
+	}
+}
+
 // Idempotent: a page that already carries a jira macro with the same jqlQuery
 // is returned unchanged, regardless of insertion strategy.
 func TestInsertTestExecutionTable_Idempotent(t *testing.T) {

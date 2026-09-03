@@ -56,8 +56,14 @@ func testExecHeading(storageHTML string) *element {
 }
 
 // testExecHeadingHTML is the "Test Execution :" section heading created when a
-// page has none yet, matching the bold-paragraph style of the reference page.
-const testExecHeadingHTML = `<p><strong>Test Execution :</strong></p>`
+// page has none yet, wrapped in its own Confluence layout section — matching the
+// reference page, where the heading sits in a bordered single-column section of
+// its own rather than as a bare paragraph. The macro/TC table that follows is
+// appended right after the closing </ac:layout>, so it stays outside the section,
+// same as the reference page's tables.
+const testExecHeadingHTML = `<ac:layout><ac:layout-section ac:type="single">` +
+	`<ac:layout-cell><p><strong>Test Execution :</strong></p></ac:layout-cell>` +
+	`</ac:layout-section></ac:layout>`
 
 // InsertTestExecutionTable inserts a Test Execution filter macro right after the
 // page's "Test Execution :" heading — the reference page layout has a screenshot
@@ -83,13 +89,29 @@ func InsertTestExecutionTable(storageHTML, serverName, serverID, jql string) (st
 	// No heading found — create one right above the macro. Place the new
 	// section just before the first TC table, so it still leads straight
 	// into the test cases below it.
-	block := testExecHeadingHTML + macro
+	return insertBeforeFirstTCTableOrAppend(storageHTML, testExecHeadingHTML+macro)
+}
+
+// EnsureTestExecutionHeading makes sure the page has a "Test Execution :" section,
+// creating one (in the same bordered layout-section style as InsertTestExecutionTable
+// and the reference page) when the page has none yet. Used by UC0 (Fill Scenario &
+// Function), which — unlike UC3 — has no Jira macro to attach, just the heading
+// itself. Returns the new HTML and whether it changed.
+func EnsureTestExecutionHeading(storageHTML string) (string, bool) {
+	if testExecHeading(storageHTML) != nil {
+		return storageHTML, false
+	}
+	return insertBeforeFirstTCTableOrAppend(storageHTML, testExecHeadingHTML)
+}
+
+// insertBeforeFirstTCTableOrAppend places block just before the page's first
+// vertical TC table, so a new section still leads straight into the test cases
+// below it, or appends it at the end when the page has no TC table at all.
+func insertBeforeFirstTCTableOrAppend(storageHTML, block string) (string, bool) {
 	for _, t := range topLevelElements(storageHTML, "table") {
 		if tableHasTCRow(storageHTML[t.start:t.end]) {
 			return storageHTML[:t.start] + block + storageHTML[t.start:], true
 		}
 	}
-
-	// No TC table on the page either — append the whole new section at the end.
 	return storageHTML + block, true
 }

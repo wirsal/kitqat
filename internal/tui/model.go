@@ -300,6 +300,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sb.WriteString(fmt.Sprintf("Page     : %s\n", r.PageTitle))
 			sb.WriteString(fmt.Sprintf("Filled   : %d cell(s)\n", r.FilledCells))
 			sb.WriteString(fmt.Sprintf("Skipped  : %d cell(s) (already filled)\n", r.SkippedCells))
+			if r.ScenarioHeadingAdded {
+				sb.WriteString("Section  : title banner created\n")
+			}
+			if r.TestExecutionHeadingAdded {
+				sb.WriteString("Section  : \"Test Execution :\" heading created\n")
+			}
+			if r.TablesWrappedInSections > 0 {
+				sb.WriteString(fmt.Sprintf("Section  : %d TC table(s) wrapped in their own section\n", r.TablesWrappedInSections))
+			}
 			if len(r.CreatedTCs) > 0 {
 				sb.WriteString("Created  : " + strings.Join(r.CreatedTCs, ", ") + "\n")
 			}

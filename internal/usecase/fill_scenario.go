@@ -29,6 +29,16 @@ type FillResult struct {
 	CreatedTCs   []string // TC numbers for which a new table was appended
 	UnmatchedTCs []string // TC tables on the page with no row in the spreadsheet
 	Changed      bool     // whether the page was actually updated
+
+	// TestExecutionHeadingAdded reports whether the page had no "Test Execution :"
+	// section yet and one was created (see confluence.EnsureTestExecutionHeading).
+	TestExecutionHeadingAdded bool
+	// ScenarioHeadingAdded reports whether the page had no title banner ("TEST
+	// SCENARIO DETAIL & SCREEN CAPTURE UAT") yet and one was created.
+	ScenarioHeadingAdded bool
+	// TablesWrappedInSections counts TC tables (existing or newly created) that
+	// were not yet their own layout section and got wrapped in one.
+	TablesWrappedInSections int
 }
 
 // Execute loads the spreadsheet, fills the page's TC tables, appends tables for any
@@ -57,10 +67,17 @@ func (uc *FillScenarioUseCase) Execute(pageURLOrID string) (*FillResult, error) 
 		return nil, fmt.Errorf("fetch confluence page: %w", err)
 	}
 
-	// 3. Fill the TC tables that already exist.
-	newBody, filled, skipped, matched := confluence.InjectScenarioFields(body, byTC)
+	// 3. Make sure the page has the title banner and a "Test Execution :" section
+	// before filling/creating any TC tables — UC3 (Add Test Execution Table) creates
+	// the latter too, but a page run through UC0 first shouldn't have to wait for
+	// UC3 just to get this far.
+	newBody, titleAdded := confluence.EnsureScenarioDetailHeading(body)
+	newBody, headingAdded := confluence.EnsureTestExecutionHeading(newBody)
 
-	// 4. Append a table for every spreadsheet row without one, in TC order.
+	// 4. Fill the TC tables that already exist.
+	newBody, filled, skipped, matched := confluence.InjectScenarioFields(newBody, byTC)
+
+	// 5. Append a table for every spreadsheet row without one, in TC order.
 	template := confluence.ExtractTCTableTemplate(body)
 	var created []string
 	for _, tcNum := range missingTCs(byTC, matched) {
@@ -68,20 +85,27 @@ func (uc *FillScenarioUseCase) Execute(pageURLOrID string) (*FillResult, error) 
 		created = append(created, "TC"+tcNum)
 	}
 
+	// 6. Wrap every TC table (existing or newly created) that isn't already its
+	// own layout section, matching the reference page.
+	newBody, wrapped := confluence.WrapTCTablesInSections(newBody)
+
 	result := &FillResult{
-		PageTitle:    title,
-		FilledCells:  filled,
-		SkippedCells: skipped,
-		CreatedTCs:   created,
-		UnmatchedTCs: unmatchedPageTCs(body, byTC),
+		PageTitle:                 title,
+		FilledCells:               filled,
+		SkippedCells:              skipped,
+		CreatedTCs:                created,
+		UnmatchedTCs:              unmatchedPageTCs(body, byTC),
+		TestExecutionHeadingAdded: headingAdded,
+		ScenarioHeadingAdded:      titleAdded,
+		TablesWrappedInSections:   wrapped,
 	}
 
-	// 5. Skip the PUT when nothing changed, so no empty page version is created.
+	// 7. Skip the PUT when nothing changed, so no empty page version is created.
 	if newBody == body {
 		return result, nil
 	}
 
-	// 6. Refuse to write markup we've broken. Confluence answers a malformed body with
+	// 8. Refuse to write markup we've broken. Confluence answers a malformed body with
 	// a 400 anyway; failing here keeps the page untouched and names the real problem.
 	// Only report it when the original page was well-formed to begin with.
 	if err := confluence.ValidateStorageBalance(newBody); err != nil {
