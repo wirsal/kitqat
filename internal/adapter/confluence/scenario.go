@@ -229,6 +229,18 @@ const defaultTCTable = `<table><tbody>` +
 	`<tr><td><p><strong>Screen Capture</strong></p></td><td><p></p></td></tr>` +
 	`</tbody></table>`
 
+// screenCaptureLabel identifies the "Screen Capture" row so a newly created TC
+// table always gets an empty Expand macro placeholder there — matching how the
+// reference page's TC tables carry their screenshots — even when the cloned
+// template's own cell had no macro to carry over.
+const screenCaptureLabel = "screen capture"
+
+// defaultExpandMacroHTML is the empty Expand macro placeholder used for a new TC
+// table's Screen Capture cell when the template had no macro of its own to keep.
+const defaultExpandMacroHTML = `<ac:structured-macro ac:name="expand">` +
+	`<ac:parameter ac:name="title">Click here to expand...</ac:parameter>` +
+	`<ac:rich-text-body><p></p></ac:rich-text-body></ac:structured-macro>`
+
 // ExtractTCTableTemplate returns the last vertical TC table on the page, to be reused
 // as the template for new test cases. Cloning a real table preserves the page's own
 // column widths, styling and macro structure. Returns "" when the page has none.
@@ -277,6 +289,11 @@ func blankTCTable(table, tcNum string) string {
 			newInner = fmt.Sprintf("<p>TC%s -</p>", tcNum)
 		case scenarioFieldLabels[label] != "":
 			newInner = "<p></p>"
+		case label == screenCaptureLabel:
+			newInner = sanitizeTemplateCell(inner)
+			if !strings.Contains(newInner, "<ac:") {
+				newInner = defaultExpandMacroHTML
+			}
 		default:
 			newInner = sanitizeTemplateCell(inner)
 		}

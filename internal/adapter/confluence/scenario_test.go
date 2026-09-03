@@ -184,6 +184,35 @@ func TestBuildTCTableClonesAndClears(t *testing.T) {
 	}
 }
 
+// A new TC table always gets an empty Expand macro placeholder in Screen
+// Capture, even when the cloned template's own cell had no macro at all — the
+// live pages we've seen mostly don't, and manually adding an Expand macro every
+// time is the exact friction this saves.
+func TestBuildTCTableAddsExpandMacroWhenTemplateHasNone(t *testing.T) {
+	plainTemplate := `<table><tbody>` +
+		`<tr><td><p><strong>No. Test Case</strong></p></td><td><p>TC01 -</p></td></tr>` +
+		`<tr><td><p><strong>Screen Capture</strong></p></td><td><p><br /></p></td></tr>` +
+		`</tbody></table>`
+
+	out := BuildTCTable(plainTemplate, "02", domain.ScenarioRow{TCNumber: "02"})
+
+	if !strings.Contains(out, `ac:name="expand"`) {
+		t.Errorf("expand macro was not added to Screen Capture:\n%s", out)
+	}
+}
+
+// A template whose Screen Capture already carries an expand macro keeps that
+// macro shell (BuildTCTableClonesAndClears / FromNestedTemplate already cover
+// the details) rather than getting a second, redundant one.
+func TestBuildTCTableKeepsExistingExpandMacroShell(t *testing.T) {
+	tmpl := ExtractTCTableTemplate(samplePage[:strings.Index(samplePage, `<table><tbody><tr><td><p><strong>No. Test Case`)])
+	out := BuildTCTable(tmpl, "05", domain.ScenarioRow{TCNumber: "05"})
+
+	if n := strings.Count(out, `ac:name="expand"`); n != 1 {
+		t.Errorf("expand macro count = %d, want 1:\n%s", n, out)
+	}
+}
+
 func TestBuildTCTableFallsBackToDefaultTemplate(t *testing.T) {
 	row := domain.ScenarioRow{TCNumber: "01", Scenario: "S", Function: "F", ExpectedResult: "E"}
 	out := BuildTCTable("", "01", row)

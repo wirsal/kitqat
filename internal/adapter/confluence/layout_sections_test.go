@@ -44,13 +44,17 @@ func TestWrapTCTablesInSections_WrapsUnwrappedTables(t *testing.T) {
 	if wrapped != 2 {
 		t.Fatalf("wrapped = %d, want 2", wrapped)
 	}
-	if n := strings.Count(got, "<ac:layout-cell>"+oneTCTable+"</ac:layout-cell>"); n != 2 {
-		t.Errorf("expected both tables wrapped in their own layout-cell, got %d matches:\n%s", n, got)
+	wantTable := `<ac:layout-cell>` + normalizeTCTable(oneTCTable) + `</ac:layout-cell>`
+	if n := strings.Count(got, wantTable); n != 2 {
+		t.Errorf("expected both tables wrapped and normalized, got %d matches:\n%s", n, got)
 	}
 }
 
 func TestWrapTCTablesInSections_SkipsAlreadyWrapped(t *testing.T) {
-	body := wrapInLayoutSection(oneTCTable) + oneTCTable // one already wrapped, one plain
+	// The already-wrapped table is also already normalized, so it's a true
+	// no-op for that one; the plain table gets wrapped (and normalized) for
+	// the first time.
+	body := wrapInLayoutSection(normalizeTCTable(oneTCTable)) + oneTCTable
 
 	got, wrapped := WrapTCTablesInSections(body)
 	if wrapped != 1 {
@@ -61,11 +65,46 @@ func TestWrapTCTablesInSections_SkipsAlreadyWrapped(t *testing.T) {
 	}
 }
 
-func TestWrapTCTablesInSections_NoOpWhenNothingToWrap(t *testing.T) {
+func TestWrapTCTablesInSections_NormalizesAlreadyWrappedTable(t *testing.T) {
+	// A table that's already in its own section but was never normalized (e.g.
+	// wrapped by an older KitQAt build) gets fixed up in place — no new
+	// <ac:layout> block, just the style attribute and colgroup added.
 	body := wrapInLayoutSection(oneTCTable)
+
+	got, wrapped := WrapTCTablesInSections(body)
+	if wrapped != 0 {
+		t.Errorf("wrapped = %d, want 0 (not newly wrapped, just normalized)", wrapped)
+	}
+	want := wrapInLayoutSection(normalizeTCTable(oneTCTable))
+	if got != want {
+		t.Errorf("got:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestWrapTCTablesInSections_NoOpWhenNothingToWrap(t *testing.T) {
+	body := wrapInLayoutSection(normalizeTCTable(oneTCTable))
 
 	got, wrapped := WrapTCTablesInSections(body)
 	if wrapped != 0 || got != body {
 		t.Errorf("wrapped = %d, got changed = %v, want 0 and unchanged", wrapped, got != body)
+	}
+}
+
+func TestNormalizeTCTable(t *testing.T) {
+	got := normalizeTCTable(oneTCTable)
+	if !strings.HasPrefix(got, `<table style="width: 100.0%;"><colgroup>`) {
+		t.Errorf("width style and/or colgroup were not added: %q", got[:min(80, len(got))])
+	}
+
+	// A table with its own style, or its own colgroup, is left untouched on
+	// that front — each fixup is independent.
+	styled := `<table style="width: 50.0%;"><tbody></tbody></table>`
+	if got := normalizeTCTable(styled); !strings.HasPrefix(got, `<table style="width: 50.0%;"><colgroup>`) {
+		t.Errorf("existing style was overwritten, or colgroup wasn't still added: got %q", got)
+	}
+
+	withColgroup := `<table><colgroup><col style="width: 30.0%;" /></colgroup><tbody></tbody></table>`
+	if got := normalizeTCTable(withColgroup); !strings.HasPrefix(got, `<table style="width: 100.0%;"><colgroup><col style="width: 30.0%;" />`) {
+		t.Errorf("existing colgroup was overwritten, or width wasn't still added: got %q", got)
 	}
 }
