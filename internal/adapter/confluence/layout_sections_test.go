@@ -63,6 +63,92 @@ func TestWrapTCTablesInSections_SkipsAlreadyWrapped(t *testing.T) {
 	if strings.Count(got, "<ac:layout>") != 2 {
 		t.Errorf("want exactly 2 layout blocks (1 pre-existing + 1 new), got:\n%s", got)
 	}
+	if merged := MergeLayouts(got); strings.Count(merged, "<ac:layout>") != 1 || strings.Count(merged, "<ac:layout-section") != 2 {
+		t.Errorf("MergeLayouts should join them into 1 layout with 2 sections, got:\n%s", merged)
+	}
+}
+
+// A table sharing its layout cell with other content (the reference page puts
+// a <br /> in front of each table) must not get a second <ac:layout> nested
+// inside that cell.
+func TestWrapTCTablesInSections_DoesNotNestInsideLayoutCell(t *testing.T) {
+	body := `<ac:layout>` + layoutSection(`<br />`+oneTCTable) + `</ac:layout>`
+
+	got, wrapped := WrapTCTablesInSections(body)
+	if wrapped != 0 {
+		t.Errorf("wrapped = %d, want 0", wrapped)
+	}
+	if strings.Count(got, "<ac:layout>") != 1 {
+		t.Errorf("a layout was nested inside the existing cell:\n%s", got)
+	}
+}
+
+// Several sibling <ac:layout> blocks — what UC0 used to write — survive only
+// until the next editor save, which drops every section. MergeLayouts joins
+// them into the single layout Confluence supports, keeping section order.
+func TestMergeLayouts_JoinsSiblingLayouts(t *testing.T) {
+	body := wrapInLayoutSection(`<p>A</p>`) + wrapInLayoutSection(`<p>B</p>`) + wrapInLayoutSection(oneTCTable)
+
+	got := MergeLayouts(body)
+	want := `<ac:layout>` + layoutSection(`<p>A</p>`) + layoutSection(`<p>B</p>`) + layoutSection(oneTCTable) + `</ac:layout>`
+	if got != want {
+		t.Errorf("got:  %q\nwant: %q", got, want)
+	}
+	if MergeLayouts(got) != got {
+		t.Error("MergeLayouts is not idempotent")
+	}
+}
+
+// Content outside the layout gets a section per top-level block; blank blocks
+// don't get empty sections of their own.
+func TestMergeLayouts_WrapsLooseContent(t *testing.T) {
+	body := `<p><strong>Banner</strong></p><p><strong>Test Execution :</strong></p>` +
+		wrapInLayoutSection(oneTCTable) + `<p />` + oneTCTable
+
+	got := MergeLayouts(body)
+	want := `<ac:layout>` +
+		layoutSection(`<p><strong>Banner</strong></p>`) +
+		layoutSection(`<p><strong>Test Execution :</strong></p>`) +
+		layoutSection(oneTCTable) +
+		layoutSection(`<p />`+oneTCTable) +
+		`</ac:layout>`
+	if got != want {
+		t.Errorf("got:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestMergeLayouts_NoOp(t *testing.T) {
+	for _, body := range []string{
+		oneTCTable, // no layout at all
+		`<ac:layout>` + layoutSection(`<p>A</p>`) + layoutSection(oneTCTable) + `</ac:layout>`,
+	} {
+		if got := MergeLayouts(body); got != body {
+			t.Errorf("body changed:\ngot:  %q\nwant: %q", got, body)
+		}
+	}
+}
+
+// On a page already laid out in one layout, creating the "Test Execution :"
+// heading must not nest a layout inside the first TC table's cell; after
+// MergeLayouts the page is still a single layout with the heading as its own
+// section, right before the TC table's.
+func TestEnsureTestExecutionHeading_InsideExistingLayout(t *testing.T) {
+	body := `<ac:layout>` + layoutSection(`<p>Banner</p>`) + layoutSection(`<br />`+oneTCTable) + `</ac:layout>`
+
+	got, changed := EnsureTestExecutionHeading(body)
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	got = MergeLayouts(got)
+	want := `<ac:layout>` + layoutSection(`<p>Banner</p>`) +
+		layoutSection(`<p><strong>Test Execution :</strong></p>`) +
+		layoutSection(`<br />`+oneTCTable) + `</ac:layout>`
+	if got != want {
+		t.Errorf("got:  %q\nwant: %q", got, want)
+	}
+	if err := ValidateStorageBalance(got); err != nil {
+		t.Error(err)
+	}
 }
 
 func TestWrapTCTablesInSections_NormalizesAlreadyWrappedTable(t *testing.T) {

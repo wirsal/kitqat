@@ -68,9 +68,9 @@ func (uc *FillScenarioUseCase) Execute(pageURLOrID string) (*FillResult, error) 
 	}
 
 	// 3. Make sure the page has the title banner and a "Test Execution :" section
-	// before filling/creating any TC tables — UC3 (Add Test Execution Table) creates
+	// before filling/creating any TC tables — Update Scenario Detail (UC2) creates
 	// the latter too, but a page run through UC0 first shouldn't have to wait for
-	// UC3 just to get this far.
+	// UC2 just to get this far.
 	newBody, titleAdded := confluence.EnsureScenarioDetailHeading(body)
 	newBody, headingAdded := confluence.EnsureTestExecutionHeading(newBody)
 
@@ -89,6 +89,11 @@ func (uc *FillScenarioUseCase) Execute(pageURLOrID string) (*FillResult, error) 
 	// own layout section, matching the reference page.
 	newBody, wrapped := confluence.WrapTCTablesInSections(newBody)
 
+	// 7. Join every layout block into the single <ac:layout> Confluence expects —
+	// several sibling layouts render fine until the next editor save, which
+	// drops every section.
+	newBody = confluence.MergeLayouts(newBody)
+
 	result := &FillResult{
 		PageTitle:                 title,
 		FilledCells:               filled,
@@ -100,12 +105,12 @@ func (uc *FillScenarioUseCase) Execute(pageURLOrID string) (*FillResult, error) 
 		TablesWrappedInSections:   wrapped,
 	}
 
-	// 7. Skip the PUT when nothing changed, so no empty page version is created.
+	// 8. Skip the PUT when nothing changed, so no empty page version is created.
 	if newBody == body {
 		return result, nil
 	}
 
-	// 8. Refuse to write markup we've broken. Confluence answers a malformed body with
+	// 9. Refuse to write markup we've broken. Confluence answers a malformed body with
 	// a 400 anyway; failing here keeps the page untouched and names the real problem.
 	// Only report it when the original page was well-formed to begin with.
 	if err := confluence.ValidateStorageBalance(newBody); err != nil {

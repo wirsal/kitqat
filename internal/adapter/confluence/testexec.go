@@ -95,7 +95,7 @@ func InsertTestExecutionTable(storageHTML, serverName, serverID, jql string) (st
 // EnsureTestExecutionHeading makes sure the page has a "Test Execution :" section,
 // creating one (in the same bordered layout-section style as InsertTestExecutionTable
 // and the reference page) when the page has none yet. Used by UC0 (Fill Scenario &
-// Function), which — unlike UC3 — has no Jira macro to attach, just the heading
+// Function), which — unlike UC2 (Update Scenario Detail) — has no Jira macro to attach, just the heading
 // itself. Returns the new HTML and whether it changed.
 func EnsureTestExecutionHeading(storageHTML string) (string, bool) {
 	if testExecHeading(storageHTML) != nil {
@@ -107,10 +107,12 @@ func EnsureTestExecutionHeading(storageHTML string) (string, bool) {
 // insertBeforeFirstTCTableOrAppend places block just before the page's first
 // vertical TC table, so a new section still leads straight into the test cases
 // below it, or appends it at the end when the page has no TC table at all.
+// When that table sits inside a layout section, block goes in front of the
+// section (see insertBlockAt).
 func insertBeforeFirstTCTableOrAppend(storageHTML, block string) (string, bool) {
 	for _, t := range topLevelElements(storageHTML, "table") {
 		if tableHasTCRow(storageHTML[t.start:t.end]) {
-			return storageHTML[:t.start] + block + storageHTML[t.start:], true
+			return insertBlockAt(storageHTML, t.start, block), true
 		}
 	}
 	return storageHTML + block, true

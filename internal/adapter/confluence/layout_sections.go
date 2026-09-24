@@ -41,22 +41,32 @@ func EnsureScenarioDetailHeading(storageHTML string) (string, bool) {
 // wrapInLayoutSection wraps inner in a single-column Confluence layout section —
 // the bordered box the editor's "Section" tool creates.
 func wrapInLayoutSection(inner string) string {
-	return `<ac:layout><ac:layout-section ac:type="single"><ac:layout-cell>` +
-		inner + `</ac:layout-cell></ac:layout-section></ac:layout>`
+	return `<ac:layout>` + layoutSection(inner) + `</ac:layout>`
+}
+
+// layoutSection is a single-column layout section holding inner, without the
+// enclosing <ac:layout>.
+func layoutSection(inner string) string {
+	return `<ac:layout-section ac:type="single"><ac:layout-cell>` + inner + `</ac:layout-cell></ac:layout-section>`
 }
 
 // WrapTCTablesInSections wraps every top-level vertical TC table that isn't
-// already the sole content of a layout cell in its own single-column layout
-// section, matching the reference page. A table already wrapped (from a
-// previous run, or built into the page manually) is left untouched except for
-// the sizing fixups below. Returns the new HTML and how many tables were newly
-// wrapped.
+// already inside a layout section in its own single-column layout section,
+// matching the reference page. A table already inside a layout cell (from a
+// previous run, or built into the page manually — possibly sharing the cell
+// with a leading <br /> or similar) is left in place except for the sizing
+// fixups below; wrapping it again would nest an <ac:layout> inside a layout
+// cell. Returns the new HTML and how many tables were newly wrapped.
 //
 // Every TC table this function touches — wrapped just now or already wrapped —
 // is also normalized (normalizeTCTable) to a consistent overall width and
 // label/value column split, so tables don't end up visibly inconsistent
 // depending on how much text each one happens to hold.
+//
+// Each newly wrapped table gets its own <ac:layout>; run MergeLayouts before
+// writing the page so they end up as sections of a single layout.
 func WrapTCTablesInSections(storageHTML string) (string, int) {
+	layouts := topLevelElements(storageHTML, "ac:layout")
 	var sb strings.Builder
 	last := 0
 	wrapped := 0
@@ -67,9 +77,9 @@ func WrapTCTablesInSections(storageHTML string) (string, int) {
 		}
 		normalized := normalizeTCTable(table)
 
-		if tableAlreadyInOwnCell(storageHTML, t.start, t.end) {
+		if enclosing(layouts, t.start) != nil {
 			if normalized == table {
-				continue // already wrapped and already sized — nothing to do
+				continue // already in a section and already sized — nothing to do
 			}
 			sb.WriteString(storageHTML[last:t.start])
 			sb.WriteString(normalized)
@@ -87,6 +97,120 @@ func WrapTCTablesInSections(storageHTML string) (string, int) {
 		return storageHTML, 0
 	}
 	return sb.String(), wrapped
+}
+
+// enclosing returns the element in els whose span contains pos, or nil.
+func enclosing(els []element, pos int) *element {
+	for i := range els {
+		if els[i].start <= pos && pos < els[i].end {
+			return &els[i]
+		}
+	}
+	return nil
+}
+
+// insertBlockAt inserts block — markup that carries its own <ac:layout> — at
+// pos. When pos falls inside an existing <ac:layout>, a layout can't be nested
+// there, so the block goes in front of the layout section holding pos instead,
+// with that layout closed before the block and reopened after it. The result
+// has sibling layouts, which MergeLayouts joins back into one.
+func insertBlockAt(s string, pos int, block string) string {
+	l := enclosing(topLevelElements(s, "ac:layout"), pos)
+	if l == nil {
+		return s[:pos] + block + s[pos:]
+	}
+	inner := s[l.innerStart:l.innerEnd]
+	sec := enclosing(topLevelElements(inner, "ac:layout-section"), pos-l.innerStart)
+	if sec == nil {
+		return s[:pos] + block + s[pos:] // not inside a section; nothing better to do
+	}
+	at := l.innerStart + sec.start
+	return s[:at] + `</ac:layout>` + block + `<ac:layout>` + s[at:]
+}
+
+// MergeLayouts rewrites a page that uses layout sections so it has exactly one
+// <ac:layout> holding every section, with no content outside it.
+//
+// Confluence only supports a single <ac:layout> per page, containing all of the
+// page's content. A body with several sibling <ac:layout> blocks (or content
+// between them) is accepted by the REST API and even renders — but the next
+// time the page goes through the editor, Confluence discards every section and
+// flattens the page. That is what made UC0's bordered sections vanish after a
+// later UC2 run or manual edit.
+//
+// Sections from every <ac:layout> are kept in order; loose top-level content
+// between them is wrapped in single-column sections of its own. A page with no
+// layout at all, or already in the one-layout form, is returned unchanged.
+func MergeLayouts(storageHTML string) string {
+	blocks := topLevelElements(storageHTML, "ac:layout", "ac:layout-section")
+	if len(blocks) == 0 {
+		return storageHTML
+	}
+	if len(blocks) == 1 && isLayoutElement(storageHTML, blocks[0]) &&
+		strings.TrimSpace(storageHTML[:blocks[0].start]) == "" &&
+		strings.TrimSpace(storageHTML[blocks[0].end:]) == "" {
+		return storageHTML
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`<ac:layout>`)
+	last := 0
+	for _, b := range blocks {
+		writeLooseSections(&sb, storageHTML[last:b.start])
+		if isLayoutElement(storageHTML, b) {
+			sb.WriteString(storageHTML[b.innerStart:b.innerEnd])
+		} else {
+			sb.WriteString(storageHTML[b.start:b.end]) // a stray bare section
+		}
+		last = b.end
+	}
+	writeLooseSections(&sb, storageHTML[last:])
+	sb.WriteString(`</ac:layout>`)
+	return sb.String()
+}
+
+// isLayoutElement reports whether e is an <ac:layout> (rather than an
+// <ac:layout-section>).
+func isLayoutElement(s string, e element) bool {
+	tag := s[e.start:]
+	return strings.HasPrefix(tag, "<ac:layout>") || strings.HasPrefix(tag, "<ac:layout ")
+}
+
+// looseBlockTags are the top-level elements MergeLayouts gives a section each
+// when they sit outside any layout.
+var looseBlockTags = append([]string{"table", "ul", "ol", "div", "ac:structured-macro"}, headingTags...)
+
+// writeLooseSections wraps content found outside any layout in single-column
+// sections — one per top-level block, so the title banner and the "Test
+// Execution :" heading each keep a section of their own. Blank blocks (an empty
+// <p />, a stray <br />) are carried into the next block's section instead of
+// getting an empty one.
+func writeLooseSections(sb *strings.Builder, loose string) {
+	if strings.TrimSpace(loose) == "" {
+		return
+	}
+	pending := ""
+	last := 0
+	for _, e := range topLevelElements(loose, looseBlockTags...) {
+		pending += loose[last:e.end]
+		last = e.end
+		if !isBlankMarkup(loose[e.start:e.end]) {
+			sb.WriteString(layoutSection(pending))
+			pending = ""
+		}
+	}
+	pending += loose[last:]
+	if !isBlankMarkup(pending) {
+		sb.WriteString(layoutSection(pending))
+	}
+}
+
+// isBlankMarkup reports whether s carries no visible content.
+func isBlankMarkup(s string) bool {
+	if strings.Contains(s, "<ac:") || strings.Contains(s, "<ri:") || strings.Contains(s, "<table") || strings.Contains(s, "<img") {
+		return false
+	}
+	return strings.TrimSpace(html.UnescapeString(reTagStrip.ReplaceAllString(s, ""))) == ""
 }
 
 // tcTableColgroup gives every TC table the same label/value column split, so
@@ -116,13 +240,4 @@ func normalizeTCTable(table string) string {
 		rest = tcTableColgroup + rest
 	}
 	return tag + ">" + rest
-}
-
-// tableAlreadyInOwnCell reports whether the table spanning [start,end) in s is
-// already the sole content of an <ac:layout-cell>...</ac:layout-cell> — i.e. it
-// doesn't need wrapping again.
-func tableAlreadyInOwnCell(s string, start, end int) bool {
-	before := strings.TrimRight(s[:start], " \t\n\r")
-	after := strings.TrimLeft(s[end:], " \t\n\r")
-	return strings.HasSuffix(before, "<ac:layout-cell>") && strings.HasPrefix(after, "</ac:layout-cell>")
 }
