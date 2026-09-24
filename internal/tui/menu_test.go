@@ -54,8 +54,7 @@ func TestMenuOrder(t *testing.T) {
 		{"0. Fill Scenario & Function", ucFillScenario},
 		{"1. Download TC to Excel", ucDownload},
 		{"2. Update Scenario Detail", ucUpdateScenario},
-		{"3. Add Test Execution Table", ucAddTestExec},
-		{"4. Mark Tickets as Done", ucSetDone},
+		{"3. Mark Tickets as Done", ucSetDone},
 	}
 
 	m := New()

@@ -13,10 +13,12 @@ import (
 // reJiraIssueKey matches a Jira issue key such as "BRSF-16163".
 var reJiraIssueKey = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
 
-// UpdateScenarioUseCase injects Jira ticket links into the "No. Test Case" cells of
-// a Confluence Scenario Detail page. The source is a Jira Test Execution issue (e.g.
-// BRSF-16163): its associated tests are matched to the page's TC tables by summary,
-// and each test's key is injected into the matching cell.
+// UpdateScenarioUseCase updates a Confluence Scenario Detail page from a Jira Test
+// Execution issue (e.g. BRSF-16163), in a single page write:
+//   - its associated tests are matched to the page's TC tables by summary, and each
+//     test's key is injected into the matching "No. Test Case" cell;
+//   - a Test Execution filter table (a Jira JQL table macro listing the execution's
+//     tests) is inserted under the page's "Test Execution :" heading.
 type UpdateScenarioUseCase struct {
 	confluenceUpdater ConfluenceUpdater
 	jiraClient        *jira.Client
@@ -32,11 +34,14 @@ type UpdateResult struct {
 	UpdatedCells int
 	SkippedCells int      // cells that already had the correct Jira link
 	UnmatchedTCs []string // TC tables on the page that matched no test
+
+	TestExecJQL        string // filter of the Test Execution table
+	TestExecTableAdded bool   // false when the table was already on the page
 }
 
 // Execute reads the tests associated with a Jira Test Execution issue, resolves the
 // Confluence page, injects each test's link into the TC table whose scenario matches
-// the test summary, and writes the page back.
+// the test summary, inserts the Test Execution table, and writes the page back.
 func (uc *UpdateScenarioUseCase) Execute(pageURLOrID, source string) (*UpdateResult, error) {
 	if uc.jiraClient == nil {
 		return nil, fmt.Errorf("no Jira client configured")
@@ -69,22 +74,40 @@ func (uc *UpdateScenarioUseCase) Execute(pageURLOrID, source string) (*UpdateRes
 	serverName, serverID := confluence.ExtractJiraServerInfo(body)
 	newBody, updated, skipped, unmatched := confluence.InjectJiraLinksByScenario(body, tickets, serverName, serverID)
 
+	// 4. Insert the Test Execution table under the "Test Execution :" heading.
+	jql := `issue in testExecutionTests("` + issueKey + `")`
+	newBody, tableAdded := confluence.InsertTestExecutionTable(newBody, serverName, serverID, jql)
+
+	// Also repair pages an older UC0 build wrote with several sibling <ac:layout>
+	// blocks, before the next editor save drops their sections.
+	newBody = confluence.MergeLayouts(newBody)
+
 	result := &UpdateResult{
 		PageTitle:    title,
 		UpdatedCells: updated,
 		SkippedCells: skipped,
 		UnmatchedTCs: unmatched,
+
+		TestExecJQL:        jql,
+		TestExecTableAdded: tableAdded,
 	}
 
-	// 4. Skip PUT if nothing changed; dump diagnostics when nothing matched.
+	// 5. Dump diagnostics when no TC table matched; skip the PUT if nothing changed.
+	if updated == 0 && skipped == 0 {
+		dumpMatchDiagnostics(pageID, title, body, tickets)
+	}
 	if newBody == body {
-		if updated == 0 && skipped == 0 {
-			dumpMatchDiagnostics(pageID, title, body, tickets)
-		}
 		return result, nil
 	}
 
-	// 5. Write the page back.
+	// 6. Refuse to write markup we have unbalanced (only when the original was well-formed).
+	if confluence.ValidateStorageBalance(body) == nil {
+		if err := confluence.ValidateStorageBalance(newBody); err != nil {
+			return nil, fmt.Errorf("update would corrupt page markup: %w", err)
+		}
+	}
+
+	// 7. Write the page back.
 	if err := uc.confluenceUpdater.UpdatePageContent(pageID, title, version, newBody); err != nil {
 		return nil, fmt.Errorf("update confluence page: %w", err)
 	}

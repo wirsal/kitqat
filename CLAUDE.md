@@ -5,7 +5,7 @@
 KitQAt is a Go TUI/CLI tool for the QA team at BRISurf. It has four use cases:
 
 1. **Download TC to Excel** — fetch test cases from a Confluence Scenario Detail page and export to `.xlsx` format ready for upload to CBAgnito.
-2. **Update Scenario Detail** — after uploading the Excel to CBAgnito (which creates Jira tickets), inject the resulting Jira ticket links into the "No. Test Case" cells of the original Confluence page.
+2. **Update Scenario Detail** — after uploading the Excel to CBAgnito (which creates Jira tickets), inject the resulting Jira ticket links into the "No. Test Case" cells of the original Confluence page, and insert the Test Execution filter table (Jira JQL macro) under the "Test Execution :" heading — one fetch, one PUT.
 3. **Mark Tickets as Done** — transition every Jira ticket from a CBAgnito job to Done.
 4. **Fill Scenario & Function** (shown as menu item `0`) — read a spreadsheet (`.xlsx`/`.csv`) and fill the Scenario, Function, Input Data, Steps and Expected Result rows of the TC tables on a Confluence page, creating tables for test cases the page doesn't have yet. Runs *before* UC1 in the workflow.
 

@@ -34,13 +34,14 @@ Expected Result × 3) · Test Plan · Test Execution · Labels
 Inject the Jira test-issue links into the **"No. Test Case"** cells of a Confluence
 page. The tests are read from a **Jira Test Execution** (e.g. `BRSF-16163`) and matched
 to each TC table by comparing the test **summary** to the page's Scenario text — so a
-mismatched execution writes nothing.
+mismatched execution writes no links.
 
-### 3. Add Test Execution Table
-Insert a **Jira filter table** (`issue in testExecutionTests("BRSF-16163")`) at the top
-of a Scenario Detail page, showing Key / Summary / Status / TestRunStatus. Idempotent.
+In the same run it inserts a **Jira filter table**
+(`issue in testExecutionTests("BRSF-16163")`) under the page's "Test Execution :"
+heading, showing Key / Summary / Status / TestRunStatus. Idempotent: a table already
+on the page is not added again.
 
-### 4. Mark Tickets as Done
+### 3. Mark Tickets as Done
 For every test in a Jira Test Execution: set the **Xray test run status to PASS** and
 transition the **test issue** to done; then transition the **Test Execution issue
 itself**. The done-transition prefers `CLOSED`, then `SELESAI` / `Done` / `Resolved`.
@@ -85,9 +86,8 @@ Confluence Scenario Detail page
       ▼
   test_cases.xlsx  ──(upload manually to CBAgnito)──►  Jira test issues + Test Execution
       │
-      │  (2) Update Scenario Detail        [inject Jira links, matched from the Test Execution]
-      │  (3) Add Test Execution Table      [insert the Jira filter table]
-      │  (4) Mark Tickets as Done          [set PASS + close via Xray]
+      │  (2) Update Scenario Detail        [inject Jira links + insert the Test Execution table]
+      │  (3) Mark Tickets as Done          [set PASS + close via Xray]
       ▼
 Confluence page complete · Jira/Xray updated
 ```

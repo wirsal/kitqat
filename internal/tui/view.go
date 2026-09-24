@@ -151,7 +151,7 @@ var formLabelsDownload = [fieldCountUC1]string{
 
 var formLabelsUpdate = [fieldCountUC2]string{
 	"Page URL  :",
-	"Jira Issue:",
+	"Test Exec :",
 }
 
 var formLabelsSetDone = [fieldCountUC3]string{
@@ -163,11 +163,6 @@ var formLabelsFill = [fieldCountUC4]string{
 	"Sheet File:",
 }
 
-var formLabelsAddTestExec = [fieldCountUC5]string{
-	"Page URL  :",
-	"Test Exec :",
-}
-
 var loginFieldLabels = [loginFieldCount]string{
 	"Username  :",
 	"Password  :",
@@ -175,11 +170,6 @@ var loginFieldLabels = [loginFieldCount]string{
 
 func (m Model) formLabel(i int) string {
 	switch m.activeUC {
-	case ucAddTestExec:
-		if i < fieldCountUC5 {
-			return formLabelsAddTestExec[i]
-		}
-		return ""
 	case ucFillScenario:
 		if i < fieldCountUC4 {
 			return formLabelsFill[i]
@@ -210,8 +200,6 @@ func (m Model) activeTitle() string {
 			return "Generate Blank Template"
 		}
 		return "Fill Scenario & Function"
-	case ucAddTestExec:
-		return "Add Test Execution Table"
 	}
 	return "Download TC to Excel"
 }
@@ -260,12 +248,6 @@ func (m Model) renderForm() string {
 		}
 		sb.WriteString("\n\n")
 		sb.WriteString(helpStyle.Render("t: no sheet yet? generate a blank template"))
-	case ucAddTestExec:
-		if m.formFocus == m.activeFieldButton() {
-			sb.WriteString(btnFocusStyle.Render("  Add Table  "))
-		} else {
-			sb.WriteString(btnBlurStyle.Render(" Add Table "))
-		}
 	default:
 		if m.formFocus == m.activeFieldButton() {
 			sb.WriteString(btnFocusStyle.Render("  Download  "))
@@ -288,8 +270,6 @@ func (m Model) renderRunning() string {
 		runText = "Reading spreadsheet and updating Confluence...\nPlease wait."
 	case m.activeUC == ucUpdateScenario:
 		runText = "Updating Scenario Detail page on Confluence...\nPlease wait."
-	case m.activeUC == ucAddTestExec:
-		runText = "Inserting Test Execution table on Confluence...\nPlease wait."
 	default:
 		runText = "Fetching test cases from Confluence...\nPlease wait."
 	}
