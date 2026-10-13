@@ -34,6 +34,7 @@ const (
 	ucUpdateScenario               // update Scenario Detail page with Jira links + Test Execution table
 	ucSetDone                      // transition Jira tickets from CBAgnito job to Done
 	ucFillScenario                 // fill Scenario/Function cells from a spreadsheet
+	ucValidate                     // renumber TC01..TCnn and set blank scenario fields to "-"
 )
 
 type menuItem struct {
@@ -44,9 +45,10 @@ type menuItem struct {
 }
 
 type downloadDoneMsg struct {
-	err    error
-	output string
-	count  int
+	err        error
+	output     string
+	count      int
+	renumbered *usecase.RenumberResult
 }
 
 type updateDoneMsg struct {
@@ -66,6 +68,11 @@ type fillDoneMsg struct {
 
 // templateDoneMsg is the result of generating a blank UC0 spreadsheet
 // template (see startGenerateTemplate / doGenerateTemplate).
+type validateDoneMsg struct {
+	err    error
+	result *usecase.ValidateResult
+}
+
 type templateDoneMsg struct {
 	err    error
 	output string
@@ -84,11 +91,12 @@ const (
 	fieldJobURLUC3  = 0 // UC3: CBAgnito job URL (slot 0, no Page URL needed)
 	fieldSourceFile = 1 // UC4: spreadsheet path (slot 1, after Page URL)
 
-	fieldCountUC1 = 5 // UC1 has 5 input fields (last one, Test Execution, is optional)
-	fieldCountUC2 = 2 // UC2 has 2 input fields
-	fieldCountUC3 = 1 // UC3 has 1 input field (job URL)
-	fieldCountUC4 = 2 // UC4 has 2 input fields (page URL, sheet file)
-	fieldCount    = 5 // max — always allocate this many inputs
+	fieldCountUC1      = 5 // UC1 has 5 input fields (last one, Test Execution, is optional)
+	fieldCountUC2      = 2 // UC2 has 2 input fields
+	fieldCountUC3      = 1 // UC3 has 1 input field (job URL)
+	fieldCountUC4      = 2 // UC4 has 2 input fields (page URL, sheet file)
+	fieldCountValidate = 1 // Validate has 1 input field (page URL)
+	fieldCount         = 5 // max — always allocate this many inputs
 
 	// Login screen (stateLogin) field indices — separate from the use-case forms above.
 	loginFieldUsername = 0
@@ -143,7 +151,9 @@ func New() Model {
 			uc:    ucDownload,
 			description: "Download test cases from a Confluence\n" +
 				"Scenario Detail page and export to\n" +
-				"XLSX format ready to upload to CBAgnito.\n\n" +
+				"XLSX format ready to upload to CBAgnito.\n" +
+				"Renumbers TC tables to TC01..TCnn first\n" +
+				"if sections were deleted.\n\n" +
 				"Fields:\n" +
 				"  • Confluence page URL\n" +
 				"  • Repo Path (default folder)\n" +
@@ -174,7 +184,22 @@ func New() Model {
 				"  • Test Execution issue (BRSF-16163)",
 		},
 		{
-			title:       "4. Exit",
+			title: "4. Validate",
+			uc:    ucValidate,
+			description: "Validate and fix a Scenario Detail\n" +
+				"page before Download TC to Excel.\n\n" +
+				"Checks:\n" +
+				"  • renumber TC tables TC01..TCnn in\n" +
+				"    page order (closes gaps left by\n" +
+				"    deleted TC sections)\n" +
+				"  • set blank Scenario, Function,\n" +
+				"    Input Data and Steps cells to \"-\"\n\n" +
+				"Run after step 0, before step 1.\n\n" +
+				"Fields:\n" +
+				"  • Confluence page URL",
+		},
+		{
+			title:       "5. Exit",
 			isExit:      true,
 			description: "Exit the application.",
 		},
@@ -222,7 +247,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resultMsg = msg.err.Error()
 		} else {
 			m.resultErr = false
-			m.resultMsg = "Downloaded " + itoa(msg.count) + " test cases.\nSaved to: " + msg.output
+			m.resultMsg = "Downloaded " + itoa(msg.count) + " test cases.\nSaved to: " + msg.output +
+				renumberSummary(msg.renumbered)
 		}
 
 	case updateDoneMsg:
@@ -310,6 +336,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sb.WriteString("\nPage already up to date — nothing was written.")
 			}
 			m.resultMsg = strings.TrimRight(sb.String(), "\n")
+		}
+
+	case validateDoneMsg:
+		m.state = stateResult
+		if msg.err != nil {
+			m.resultErr = true
+			m.resultMsg = msg.err.Error()
+		} else {
+			m.resultErr = false
+			m.resultMsg = validateSummary(msg.result)
 		}
 
 	case templateDoneMsg:
@@ -479,6 +515,8 @@ func (m Model) activeFieldCount() int {
 		return fieldCountUC3
 	case ucFillScenario:
 		return fieldCountUC4
+	case ucValidate:
+		return fieldCountValidate
 	}
 	return fieldCountUC1
 }
@@ -535,6 +573,13 @@ func (m Model) startAction() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			m.spinner.Tick,
 			func() tea.Msg { return doFillScenario(username, password, pageURL, sourceFile) },
+		)
+	}
+
+	if m.activeUC == ucValidate {
+		return m, tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg { return doValidate(username, password, pageURL) },
 		)
 	}
 
@@ -612,6 +657,13 @@ func doDownload(username, password, pageURL, repoPath, project, output, testExec
 		return downloadDoneMsg{err: err}
 	}
 
+	// Close gaps left by deleted TC sections (TC01, 02, 04 … → TC01, 02, 03 …) on the
+	// page itself, so the exported Test IDs match it before upload to CBAgnito.
+	renumbered, err := usecase.NewRenumberUseCase(repo).Execute(pageID)
+	if err != nil {
+		return downloadDoneMsg{err: err}
+	}
+
 	var testCases []domain.TestCase
 	testCases, err = repo.FetchTestCases(pageID)
 	if err != nil {
@@ -623,7 +675,34 @@ func doDownload(username, password, pageURL, repoPath, project, output, testExec
 	if err = exp.Export(testCases, output); err != nil {
 		return downloadDoneMsg{err: err}
 	}
-	return downloadDoneMsg{count: len(testCases), output: output}
+	return downloadDoneMsg{count: len(testCases), output: output, renumbered: renumbered}
+}
+
+// renumberSummary describes what the pre-download renumbering did, or "" when the
+// page was already numbered TC01..TCnn.
+func renumberSummary(r *usecase.RenumberResult) string {
+	if r == nil || len(r.Changes) == 0 {
+		return ""
+	}
+	if r.Blocked {
+		return "\n\nWARNING: TC numbering has gaps, but the page already has Jira links —\n" +
+			"page NOT renumbered: " + renumberList(r.Changes)
+	}
+	return fmt.Sprintf("\n\nRenumbered %d TC(s) on Confluence: %s", len(r.Changes), renumberList(r.Changes))
+}
+
+// renumberList renders renumber changes as "TC04→TC03, TC06→TC04, … +N more".
+func renumberList(changes []confluence.TCRenumber) string {
+	const maxShown = 5
+	var parts []string
+	for i, c := range changes {
+		if i == maxShown {
+			parts = append(parts, fmt.Sprintf("… +%d more", len(changes)-maxShown))
+			break
+		}
+		parts = append(parts, "TC"+c.From+"→TC"+c.To)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ── Update Scenario logic ─────────────────────────────────────────────────────
@@ -659,6 +738,48 @@ func doFillScenario(username, password, pageURL, sourceFile string) tea.Msg {
 	return fillDoneMsg{err: err, result: result}
 }
 
+// ── Validate logic ───────────────────────────────────────────────────
+
+func doValidate(username, password, pageURL string) tea.Msg {
+	confluenceClient := confluence.NewClient("https://confluence.bri.co.id", username, password)
+	repo := confluence.NewRepository(confluenceClient)
+
+	result, err := usecase.NewValidateUseCase(repo).Execute(pageURL)
+	return validateDoneMsg{err: err, result: result}
+}
+
+// validateSummary renders the result screen of a Validate run.
+func validateSummary(r *usecase.ValidateResult) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Page     : %s\n", r.PageTitle)
+	fmt.Fprintf(&sb, "TC tables: %d\n", r.TCCount)
+
+	switch {
+	case len(r.Renumber) == 0:
+		fmt.Fprintf(&sb, "Order    : OK (already TC01..TC%02d)\n", r.TCCount)
+	case r.RenumberBlocked:
+		sb.WriteString("Order    : NOT renumbered — page already has Jira links\n")
+		fmt.Fprintf(&sb, "           gaps: %s\n", renumberList(r.Renumber))
+	default:
+		fmt.Fprintf(&sb, "Renumber : %d TC(s): %s\n", len(r.Renumber), renumberList(r.Renumber))
+	}
+
+	if r.DashFilled > 0 {
+		tcs := make([]string, len(r.DashFilledTCs))
+		for i, n := range r.DashFilledTCs {
+			tcs[i] = "TC" + n
+		}
+		fmt.Fprintf(&sb, "Blank → -: %d cell(s) in %s\n", r.DashFilled, strings.Join(tcs, ", "))
+	} else {
+		sb.WriteString("Blank → -: none\n")
+	}
+
+	if !r.Changed {
+		sb.WriteString("\nPage already valid — nothing was written.")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
 // ── Generate Template logic ───────────────────────────────────────────────────
 
 func doGenerateTemplate(outputPath string) tea.Msg {
@@ -684,7 +805,7 @@ func buildInputs(uc activeUseCase) []textinput.Model {
 	} else if uc == ucFillScenario {
 		// UC4: slot 1 = spreadsheet path
 		inputs[fieldSourceFile] = newInput(`C:\Users\...\scenario.xlsx`, false)
-	} else {
+	} else if uc != ucValidate { // Validate needs only the Page URL
 		// UC3: slot 0 = Jira Test Execution issue (no Page URL needed)
 		inputs[fieldJobURLUC3] = newInput("Jira Test Execution e.g. BRSF-16163", false)
 	}

@@ -163,6 +163,10 @@ var formLabelsFill = [fieldCountUC4]string{
 	"Sheet File:",
 }
 
+var formLabelsValidate = [fieldCountValidate]string{
+	"Page URL  :",
+}
+
 var loginFieldLabels = [loginFieldCount]string{
 	"Username  :",
 	"Password  :",
@@ -185,6 +189,11 @@ func (m Model) formLabel(i int) string {
 			return formLabelsSetDone[i]
 		}
 		return ""
+	case ucValidate:
+		if i < fieldCountValidate {
+			return formLabelsValidate[i]
+		}
+		return ""
 	}
 	return formLabelsDownload[i]
 }
@@ -195,6 +204,8 @@ func (m Model) activeTitle() string {
 		return "Update Scenario Detail"
 	case ucSetDone:
 		return "Mark Tickets as Done"
+	case ucValidate:
+		return "Validate"
 	case ucFillScenario:
 		if m.templateInProgress {
 			return "Generate Blank Template"
@@ -240,6 +251,12 @@ func (m Model) renderForm() string {
 		} else {
 			sb.WriteString(btnBlurStyle.Render(" Set Done "))
 		}
+	case ucValidate:
+		if m.formFocus == m.activeFieldButton() {
+			sb.WriteString(btnFocusStyle.Render("  Validate  "))
+		} else {
+			sb.WriteString(btnBlurStyle.Render(" Validate "))
+		}
 	case ucFillScenario:
 		if m.formFocus == m.activeFieldButton() {
 			sb.WriteString(btnFocusStyle.Render("  Fill  "))
@@ -270,6 +287,8 @@ func (m Model) renderRunning() string {
 		runText = "Reading spreadsheet and updating Confluence...\nPlease wait."
 	case m.activeUC == ucUpdateScenario:
 		runText = "Updating Scenario Detail page on Confluence...\nPlease wait."
+	case m.activeUC == ucValidate:
+		runText = "Validating page on Confluence...\nPlease wait."
 	default:
 		runText = "Fetching test cases from Confluence...\nPlease wait."
 	}

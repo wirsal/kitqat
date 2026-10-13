@@ -55,6 +55,7 @@ func TestMenuOrder(t *testing.T) {
 		{"1. Download TC to Excel", ucDownload},
 		{"2. Update Scenario Detail", ucUpdateScenario},
 		{"3. Mark Tickets as Done", ucSetDone},
+		{"4. Validate", ucValidate},
 	}
 
 	m := New()

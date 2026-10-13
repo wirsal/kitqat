@@ -2,12 +2,13 @@
 
 ## Project Overview
 
-KitQAt is a Go TUI/CLI tool for the QA team at BRISurf. It has four use cases:
+KitQAt is a Go TUI/CLI tool for the QA team at BRISurf. It has five use cases:
 
 1. **Download TC to Excel** — fetch test cases from a Confluence Scenario Detail page and export to `.xlsx` format ready for upload to CBAgnito.
 2. **Update Scenario Detail** — after uploading the Excel to CBAgnito (which creates Jira tickets), inject the resulting Jira ticket links into the "No. Test Case" cells of the original Confluence page, and insert the Test Execution filter table (Jira JQL macro) under the "Test Execution :" heading — one fetch, one PUT.
 3. **Mark Tickets as Done** — transition every Jira ticket from a CBAgnito job to Done.
 4. **Fill Scenario & Function** (shown as menu item `0`) — read a spreadsheet (`.xlsx`/`.csv`) and fill the Scenario, Function, Input Data, Steps and Expected Result rows of the TC tables on a Confluence page, creating tables for test cases the page doesn't have yet. Runs *before* UC1 in the workflow.
+5. **Validate** (menu item `4`) — `ValidateUseCase` (`internal/usecase/validate.go`): the home for pre-download page checks, which will grow beyond TC numbering. Today it renumbers the TC tables TC01..TCnn in page order and sets blank Scenario, Function, Input Data and Steps cells to `-` (`FillBlankFieldsWithDash` in `blank_fields.go`; Expected Result is left alone, and a cell already holding `-` or a macro counts as filled). One fetch, one PUT, skipped when nothing changes; renumbering is skipped (with a warning) when the page already has Jira links.
 
 ## Module
 
@@ -90,7 +91,7 @@ fieldCountUC4 = 4
 fieldCount    = 6  (max allocation)
 ```
 
-All use cases share the same `inputs` slice (length 6) and overwrite the slots they need — UC2/UC4 write slot 3, UC3 writes slot 2. Every use case must use `activeFieldCount()` and `activeFieldButton()` instead of a fixed constant. Menu order follows the real workflow, not the use-case numbering: `0. Fill Scenario & Function`, `1. Download TC to Excel`, `2. Update Scenario Detail`, `3. Mark Tickets as Done`, `4. Exit`. UC4 is labelled `0` because it runs before step 1, which keeps the numbers the QA team already knows attached to UC1-UC3.
+All use cases share the same `inputs` slice (length 6) and overwrite the slots they need — UC2/UC4 write slot 3, UC3 writes slot 2. Every use case must use `activeFieldCount()` and `activeFieldButton()` instead of a fixed constant. Menu order follows the real workflow, not the use-case numbering: `0. Fill Scenario & Function`, `1. Download TC to Excel`, `2. Update Scenario Detail`, `3. Mark Tickets as Done`, `4. Validate`, `5. Exit`. Validate (`ucValidate`, `fieldCountValidate = 1`, Page URL only) is run between steps 0 and 1 but listed as an extra entry so the numbers 0-3 stay put. UC4 is labelled `0` because it runs before step 1, which keeps the numbers the QA team already knows attached to UC1-UC3.
 
 Each `menuItem` carries the `activeUseCase` it launches (and `isExit` for the last entry), so `updateMenu` reads `m.items[m.cursor].uc` instead of switching on literal indices — reordering or inserting a menu entry needs no other change. `TestMenuSelectionMatchesItem` in `internal/tui/menu_test.go` guards this.
 
@@ -146,4 +147,5 @@ Note: `InjectJiraLinks` (UC2) still uses the older `<tr>` regexes. It doesn't co
 - If output path is empty after stripping quotes, defaults back to `test_cases.xlsx`.
 - `ExpectedResult` is read from KV keys: `"expected result"`, `"expected"`, `"hasil yang diharapkan"`.
 - UC4 spreadsheet input: the header row is auto-detected within the first 10 rows (a row qualifies with ≥2 recognised columns), so a file exported by UC1 — header on rows 1-2, data from row 3 — can be fed straight back in. For `.xlsx` the `Create Test` sheet is preferred, otherwise the first sheet. A missing/blank TC column falls back to row position.
+- UC1 renumbers the page before exporting (`RenumberUseCase` → `RenumberTCTables` in `renumber.go`): QA may delete TC sections between UC0 and UC1 (TC01..50 minus TC03/TC05 → TC01, 02, 04, 06…), and Test IDs come from these numbers. TC tables are renumbered TC01..TCnn **in page order**, rewriting only the TC token in the "No. Test Case" cell; one PUT, skipped when already sequential. If any TC cell already has a Jira macro (page went through CBAgnito), the page is left unchanged and a warning is shown.
 - UC4's `ScenarioSource` interface exists so a Google Sheets source can be added later without touching the parser or use case; only the local-file source is implemented today.
